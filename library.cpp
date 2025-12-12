@@ -1,66 +1,134 @@
-#include "library.h"  // If you have custom headers; otherwise remove
+#include "library.h"
 
 #include <windows.h>
-#include <stdio.h>
+#include <iostream>
+#include <string>
+#include <vector>
 #include <thread>
-#include <discord.h>  // From SDK
+#include <chrono>
+#include <discord.h>
 
 discord::Core* discordCore = nullptr;
-discord::Activity activity{};
+
+// Helper function to format numbers with commas
+std::string format_with_commas(long long value) {
+    std::string s = std::to_string(value);
+    int n = s.length() - 3;
+    while (n > 0) {
+        s.insert(n, ",");
+        n -= 3;
+    }
+    return s;
+}
 
 DWORD WINAPI DiscordThread(LPVOID param) {
-    while (true) {
-        if (discordCore) {
-            discordCore->RunCallbacks();
-        }
-        Sleep(16);  // Run ~60 times per second; adjust to balance CPU usage
+    uintptr_t baseModule = (uintptr_t)GetModuleHandle(NULL);
+    if (!baseModule) {
+        return 1; // Cannot proceed
     }
+    
+    discord::Activity activity{};
+    activity.SetType(discord::ActivityType::Playing);
+    activity.SetApplicationId(656565390411038731);
+    activity.GetAssets().SetLargeImage("gcrown");
+    activity.GetAssets().SetLargeText("NFS ProStreet v1.1");
+    activity.GetTimestamps().SetStart(time(nullptr));
+    activity.SetName("Need for Speed: ProStreet");
+
+    while (true) {
+        try {
+            // Money pointer path: [[base + 0x6B0EA8]] + 0x1E0
+            uintptr_t moneyAddr = 0;
+            uintptr_t moneyBasePtr = baseModule + 0x6B0EA8;
+            if (IsBadReadPtr((void*)moneyBasePtr, sizeof(uintptr_t)) == 0) {
+                uintptr_t moneyPtrVal = *(uintptr_t*)moneyBasePtr;
+                if (moneyPtrVal != 0 && IsBadReadPtr((void*)(moneyPtrVal + 0x1E0), sizeof(unsigned long long)) == 0) {
+                     moneyAddr = moneyPtrVal + 0x1E0;
+                }
+            }
+            
+            // XP pointer path: [[[base + 0x6B9FB8] + 0x3C]] + 0x1C
+            uintptr_t xpAddr = 0;
+            uintptr_t xpBasePtr = baseModule + 0x6B9FB8;
+            if (IsBadReadPtr((void*)xpBasePtr, sizeof(uintptr_t)) == 0) {
+                uintptr_t xpPtrVal1 = *(uintptr_t*)xpBasePtr;
+                if (xpPtrVal1 != 0 && IsBadReadPtr((void*)(xpPtrVal1 + 0x3C), sizeof(uintptr_t)) == 0) {
+                    uintptr_t xpPtrVal2 = *(uintptr_t*)(xpPtrVal1 + 0x3C);
+                    if (xpPtrVal2 != 0 && IsBadReadPtr((void*)(xpPtrVal2 + 0x1C), sizeof(unsigned long long)) == 0) {
+                        xpAddr = xpPtrVal2 + 0x1C;
+                    }
+                }
+            }
+
+            unsigned long long money = 0;
+            unsigned long long xp = 0;
+
+            bool hasMoney = (moneyAddr != 0);
+            bool hasXp = (xpAddr != 0);
+
+            if (hasMoney) {
+                money = *(unsigned long long*)moneyAddr;
+            }
+
+            if (hasXp) {
+                xp = *(unsigned long long*)xpAddr;
+            }
+
+            if (hasMoney || hasXp) {
+                if (hasMoney) {
+                    std::string formatted_balance = format_with_commas(money);
+                    activity.SetState((formatted_balance + "$").c_str());
+                } else {
+                    activity.SetState("Money: N/A");
+                }
+
+                if (hasXp) {
+                    std::string formatted_xp = format_with_commas(xp);
+                    activity.SetDetails(("Raceday: " + formatted_xp + " XP").c_str());
+                } else {
+                    activity.SetDetails("Raceday: N/A XP");
+                }
+
+            } else {
+                activity.SetState("In Menus");
+                activity.SetDetails("Navigating");
+            }
+
+
+            if (discordCore) {
+                discordCore->ActivityManager().UpdateActivity(activity, [](discord::Result res) {});
+                discordCore->RunCallbacks();
+            }
+
+        } catch (...) {
+            activity.SetState("In Menus");
+            activity.SetDetails("Error reading data");
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
     return 0;
 }
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
-    switch (ul_reason_for_call) {
-        case DLL_PROCESS_ATTACH: {
-            printf("initialized prostreet discord rpc\n");
-
-            // Initialize Discord Core
-            discord::Result result = discord::Core::Create(656565390411038731, DiscordCreateFlags_Default, &discordCore);
-            if (result != discord::Result::Ok) {
-                printf("Failed to create Discord core: %d\n", static_cast<int>(result));
-                return FALSE;
-            }
-
-            // Optional: Set log hook for SDK debugging
-            discordCore->SetLogHook(discord::LogLevel::Debug, [](discord::LogLevel level, const char* message) {
-                printf("[Discord SDK] %s\n", message);
-            });
-
-            // Set up basic "Hello World" Rich Presence activity
-            activity.SetType(discord::ActivityType::Playing);
-            activity.SetApplicationId(656565390411038731);
-            activity.SetName("Hello World");
-            activity.SetDetails("Just testing RPC");
-            activity.SetState("Hello from NFS ProStreet!");
-            activity.GetTimestamps().SetStart(time(nullptr));
-
-            // Update the activity
-            discordCore->ActivityManager().UpdateActivity(activity, [](discord::Result res) {
-                if (res == discord::Result::Ok) {
-                    printf("Hello World Rich Presence updated successfully\n");
-                } else {
-                    printf("Failed to update activity: %d\n", static_cast<int>(res));
-                }
-            });
-
-            // Start the callback thread
-            CreateThread(NULL, 0, DiscordThread, NULL, 0, NULL);
-            break;
+    if (ul_reason_for_call == DLL_PROCESS_ATTACH) {
+        char procname[MAX_PATH];
+        GetModuleFileNameA(NULL, procname, MAX_PATH);
+        if (strstr(procname, "nfs.exe") == NULL) {
+            return TRUE;
         }
 
-        case DLL_PROCESS_DETACH: {
-            // Cleanup
-            discordCore = nullptr;  // SDK handles destruction automatically
-            break;
+        DisableThreadLibraryCalls(hModule);
+
+        discord::Result result = discord::Core::Create(656565390411038731, DiscordCreateFlags_NoRequireDiscord, &discordCore);
+        if (result != discord::Result::Ok) {
+            return FALSE;
+        }
+
+        HANDLE hThread = CreateThread(NULL, 0, DiscordThread, NULL, 0, NULL);
+        if (hThread) {
+            CloseHandle(hThread);
         }
     }
 
