@@ -6,6 +6,7 @@
 #include <vector>
 #include <thread>
 #include <chrono>
+#include <cstdio>
 #include <discord.h>
 
 discord::Core* discordCore = nullptr;
@@ -22,10 +23,13 @@ std::string format_with_commas(long long value) {
 }
 
 DWORD WINAPI DiscordThread(LPVOID param) {
+    printf("[ProStreetRPC] Discord thread started.\n");
     uintptr_t baseModule = (uintptr_t)GetModuleHandle(NULL);
     if (!baseModule) {
+        printf("[ProStreetRPC] Failed to get base module.\n");
         return 1; // Cannot proceed
     }
+    printf("[ProStreetRPC] Base module found at: 0x%p\n", (void*)baseModule);
     
     discord::Activity activity{};
     activity.SetType(discord::ActivityType::Playing);
@@ -35,7 +39,14 @@ DWORD WINAPI DiscordThread(LPVOID param) {
     activity.GetTimestamps().SetStart(time(nullptr));
     activity.SetName("Need for Speed: ProStreet");
 
+    int loop_count = 0;
+
     while (true) {
+        if (loop_count % 20 == 0) { // Log every 10 seconds (20 * 500ms)
+            printf("[ProStreetRPC] Discord thread is running.\n");
+        }
+        loop_count++;
+
         try {
             // Money pointer path: [[base + 0x6B0EA8]] + 0x1E0
             uintptr_t moneyAddr = 0;
@@ -101,6 +112,7 @@ DWORD WINAPI DiscordThread(LPVOID param) {
             }
 
         } catch (...) {
+            printf("[ProStreetRPC] Exception caught in Discord thread.\n");
             activity.SetState("In Menus");
             activity.SetDetails("Error reading data");
         }
@@ -113,22 +125,31 @@ DWORD WINAPI DiscordThread(LPVOID param) {
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
     if (ul_reason_for_call == DLL_PROCESS_ATTACH) {
+        printf("[ProStreetRPC] ASI attached. (https://code.weexnes.dev/ProStreetRPC)\n");
         char procname[MAX_PATH];
         GetModuleFileNameA(NULL, procname, MAX_PATH);
         if (strstr(procname, "nfs.exe") == NULL) {
+            printf("[ProStreetRPC] Not nfs.exe, exiting.\n");
             return TRUE;
         }
+
+        printf("[ProStreetRPC] nfs.exe detected.\n");
 
         DisableThreadLibraryCalls(hModule);
 
         discord::Result result = discord::Core::Create(656565390411038731, DiscordCreateFlags_NoRequireDiscord, &discordCore);
         if (result != discord::Result::Ok) {
+            printf("[ProStreetRPC] Failed to create Discord core: %d\n", (int)result);
             return FALSE;
         }
+        printf("[ProStreetRPC] Discord core created successfully.\n");
 
         HANDLE hThread = CreateThread(NULL, 0, DiscordThread, NULL, 0, NULL);
         if (hThread) {
+            printf("[ProStreetRPC] Discord thread created successfully.\n");
             CloseHandle(hThread);
+        } else {
+            printf("[ProStreetRPC] Failed to create Discord thread.\n");
         }
     }
 
