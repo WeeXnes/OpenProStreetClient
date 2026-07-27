@@ -14,6 +14,8 @@
 
 discord::Core* discordCore = nullptr;
 
+const std::string version = "1.1";
+
 
 // Translation table for known internal map identifiers.
 // To extend with newly discovered map identifiers, simply add new key-value pairs to this map.
@@ -199,7 +201,7 @@ DWORD WINAPI DiscordThread(LPVOID param) {
     activity.SetType(discord::ActivityType::Playing);
     activity.SetApplicationId(656565390411038731);
     activity.GetAssets().SetLargeImage("gcrown");
-    activity.GetAssets().SetLargeText("NFS ProStreet v1.1");
+    activity.GetAssets().SetLargeText(("ProStreetRPC v" + version + " by WeeXnes").c_str());
     activity.GetTimestamps().SetStart(time(nullptr));
     activity.SetName("Need for Speed: ProStreet");
 
@@ -265,7 +267,7 @@ DWORD WINAPI DiscordThread(LPVOID param) {
             if (hasMap) {
                 activity.GetAssets().SetLargeText(displayMap.c_str());
             } else {
-                activity.GetAssets().SetLargeText("NFS ProStreet v1.1");
+                activity.GetAssets().SetLargeText(("ProStreetRPC v" + version + " by WeeXnes").c_str());
             }
 
             if (hasMap || hasMoney || hasXp) {
