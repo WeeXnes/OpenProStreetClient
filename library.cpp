@@ -14,7 +14,7 @@
 
 discord::Core* discordCore = nullptr;
 
-const std::string version = "1.1";
+const std::string version = "1.5";
 
 
 // Translation table for known internal map identifiers.
