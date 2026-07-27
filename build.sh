@@ -44,7 +44,25 @@ if [ -f "${SDK_DIR}/lib/x86/discord_game_sdk.dll" ]; then
     cp "${SDK_DIR}/lib/x86/discord_game_sdk.dll" build/
 fi
 
+echo "Creating ZIP bundle..."
+python3 -c "
+import zipfile, os
+version = '1.5'
+if os.path.exists('library.cpp'):
+    with open('library.cpp') as f:
+        for line in f:
+            if 'const std::string version =' in line:
+                version = line.split('\"')[1]
+                break
+zip_name = f'build/ProStreetRPC_v{version}.zip'
+with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+    zipf.write('build/ProStreetRPC.asi', 'ProStreetRPC.asi')
+    zipf.write('build/discord_game_sdk.dll', 'discord_game_sdk.dll')
+print(f'Successfully created release bundle: {zip_name}')
+"
+
 echo "=== Build Completed Successfully! ==="
 echo "Output files are in the 'build/' directory:"
 echo "  - build/ProStreetRPC.asi"
 echo "  - build/discord_game_sdk.dll"
+echo "  - build/ProStreetRPC_v*.zip (Release Bundle)"

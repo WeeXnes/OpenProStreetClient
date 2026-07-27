@@ -1,0 +1,27 @@
+{
+  "name": "ProStreetRPC Cross-Compilation Pipeline",
+  "steps": [
+    {
+      "name": "1. Checkout Repository",
+      "type": "checkout"
+    },
+    {
+      "name": "2. Define Release Version Variable",
+      "type": "set_var",
+      "varName": "RELEASE_VERSION",
+      "varValue": "1.5"
+    },
+    {
+      "name": "3. Execute Cross-Compilation Build",
+      "type": "command",
+      "command": "bash build.sh"
+    },
+    {
+      "name": "4. Upload Release Bundle",
+      "type": "upload_artifact",
+      "filePath": "build/ProStreetRPC_v@RELEASE_VERSION@.zip",
+      "version": "@RELEASE_VERSION@",
+      "title": "ProStreetRPC_v@RELEASE_VERSION@.zip"
+    }
+  ]
+}

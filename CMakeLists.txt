@@ -32,6 +32,14 @@ if(EXISTS "${THIRDPARTY_SDK_DIR}")
             "-include" "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty_imports.h"
         )
     endif()
+
+    if(MINGW)
+        target_link_options(ProStreetRPC PRIVATE
+            -static-libgcc
+            -static-libstdc++
+            -static
+        )
+    endif()
     
     # For MinGW, we can link directly to the 32-bit dll.lib (import library)
     target_link_libraries(ProStreetRPC PRIVATE
