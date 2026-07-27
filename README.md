@@ -52,8 +52,18 @@ To compile for Windows using a Linux host:
    cmake --build build --config Release
    ```
 
+## Game Requirements (Confirmed Working Setup)
+
+To use this plugin, the following game setup is required and confirmed working:
+- **Game Version**: Need for Speed: ProStreet (Europe version) with 1.1 update.
+- **Executable Fix**: Battery 1.1 nocdfix.
+- **Multifix**: Multifix 1.1 (already includes a built-in ASI loader).
+
 ## Installation
 
-1. Place `ProStreetRPC.asi` and `discord_game_sdk.dll` into your Need for Speed: ProStreet installation directory (where `nfs.exe` is located).
-2. Ensure you have an ASI Loader installed (e.g., Ultimate ASI Loader).
-3. Start Discord, launch the game, and enjoy!
+1. Ensure the `scripts` folder exists in your Need for Speed: ProStreet root directory (where `nfs.exe` is located): `<prostreet-root>/scripts/`.
+2. Place `ProStreetRPC.asi` into the `scripts` folder (i.e. `<prostreet-root>/scripts/ProStreetRPC.asi`).
+3. Place `discord_game_sdk.dll` into your Need for Speed: ProStreet root directory (where `nfs.exe` is located).
+4. No external ASI loader is needed (Multifix 1.1 handles loading ASI plugins from the `scripts` directory automatically).
+5. Start Discord, launch the game, and enjoy!
+
