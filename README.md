@@ -1,6 +1,5 @@
 # ProStreetRPC
 
-
 An ASI plugin that adds Discord Rich Presence integration to Need for Speed: ProStreet.
 
 ## Features
