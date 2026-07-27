@@ -2,14 +2,35 @@
 
 #include <windows.h>
 #include <iostream>
+
 #include <string>
 #include <vector>
 #include <thread>
 #include <chrono>
 #include <cstdio>
+#include <unordered_map>
+
 #include <discord.h>
 
 discord::Core* discordCore = nullptr;
+
+
+// Translation table for known internal map identifiers.
+// To extend with newly discovered map identifiers, simply add new key-value pairs to this map.
+static const std::unordered_map<std::string, std::string> MAP_TRANSLATION_TABLE = {
+    {"portland", "Portland International Raceway"},
+    {"willow_springs", "Willow Springs International Raceway"},
+    {"chicago_gd", "Chicago Airfield"},
+    {"leipzig", "Leipzig Test Track"},
+    {"ebisu", "Ebisu Circuit"},
+    {"mondello_park", "Mondello Park"},
+    {"autopolis", "Autopolis"},
+    {"texas_speedway", "Texas World Speedway"},
+    {"shuto_gd", "Tokyo Docklands"},
+    {"autobahn_gd", "Autobahnring"},
+    {"nevada_gd", "Nevada Highway"},
+    {"infineon", "Infineon Raceway"}
+};
 
 // Helper function to format numbers with commas
 std::string format_with_commas(long long value) {
@@ -20,6 +41,149 @@ std::string format_with_commas(long long value) {
         n -= 3;
     }
     return s;
+}
+
+// Validates if a string is a valid printable ASCII map identifier.
+bool IsValidMapIdentifier(const std::string& str) {
+    if (str.length() < 2 || str.length() > 64) {
+        return false;
+    }
+    
+    bool hasAlphaNum = false;
+    for (char c : str) {
+        unsigned char uc = (unsigned char)c;
+        if (uc < 32 || uc > 126) {
+            return false; // Non-printable / uninitialized garbage byte
+        }
+        if (isalnum(uc)) {
+            hasAlphaNum = true;
+        }
+    }
+    return hasAlphaNum;
+}
+
+// Translates a raw map identifier using the translation table.
+// If the identifier is not present in the translation table, returns the raw string as-is without modification or normalization.
+std::string TranslateMapIdentifier(const std::string& rawIdentifier) {
+    if (rawIdentifier.empty()) {
+        return "";
+    }
+
+    auto it = MAP_TRANSLATION_TABLE.find(rawIdentifier);
+    if (it != MAP_TRANSLATION_TABLE.end()) {
+        return it->second;
+    }
+
+    static std::string lastMissingId = "";
+    if (rawIdentifier != lastMissingId) {
+        printf("[ProStreetRPC] COULDNT FIND TRANSLATION FOR ID: %s\n", rawIdentifier.c_str());
+        lastMissingId = rawIdentifier;
+    }
+
+    return rawIdentifier;
+}
+
+// Safely reads a null-terminated C string from memory up to maxLen bytes, skipping any non-printable prefix bytes.
+std::string ReadStringFromMemory(uintptr_t strPtr, size_t maxLen = 64) {
+    if (!strPtr || IsBadReadPtr((void*)strPtr, 1)) {
+        return "";
+    }
+
+    // Step 1: Find first printable alphanumeric byte within first 16 bytes (to skip unprintable prefix/control bytes)
+    size_t startOffset = 0;
+    bool foundStart = false;
+    for (size_t i = 0; i < 16; ++i) {
+        if (IsBadReadPtr((void*)(strPtr + i), 1)) {
+            break;
+        }
+        char c = *(char*)(strPtr + i);
+        if (c == '\0') {
+            break;
+        }
+        unsigned char uc = (unsigned char)c;
+        if (isalnum(uc)) {
+            startOffset = i;
+            foundStart = true;
+            break;
+        }
+    }
+
+    if (!foundStart) {
+        return "";
+    }
+
+    // Step 2: Read printable ASCII characters from startOffset until null terminator or non-printable byte
+    std::string result;
+    result.reserve(32);
+    for (size_t i = startOffset; i < maxLen; ++i) {
+        if (IsBadReadPtr((void*)(strPtr + i), 1)) {
+            break;
+        }
+        char c = *(char*)(strPtr + i);
+        if (c == '\0') {
+            break;
+        }
+        unsigned char uc = (unsigned char)c;
+        if (uc < 32 || uc > 126) {
+            break; // Stop at end of printable ASCII string segment
+        }
+        result.push_back(c);
+    }
+
+    if (!IsValidMapIdentifier(result)) {
+        return "";
+    }
+
+    return result;
+}
+
+// Reads the raw map identifier from memory using primary and secondary (fallback) pointer chains.
+// Primary pointer:   "nfs.exe" + 0x7309C0 -> +0x4
+// Secondary pointer: "nfs.exe" + 0x7309B4 -> +0x54
+std::string ReadRawMapIdentifier(uintptr_t baseModule) {
+    // Try Primary Pointer: "nfs.exe" + 0x7309C0 -> +0x4
+    uintptr_t primaryBase = baseModule + 0x7309C0;
+    if (IsBadReadPtr((void*)primaryBase, sizeof(uintptr_t)) == 0) {
+        uintptr_t ptr1 = *(uintptr_t*)primaryBase;
+        if (ptr1 != 0) {
+            // 1. Try direct string buffer at (ptr1 + 0x4)
+            std::string rawStr = ReadStringFromMemory(ptr1 + 0x4);
+            if (!rawStr.empty()) {
+                return rawStr;
+            }
+            // 2. Try dereferenced char* pointer at *(ptr1 + 0x4)
+            if (IsBadReadPtr((void*)(ptr1 + 0x4), sizeof(uintptr_t)) == 0) {
+                uintptr_t strPtr = *(uintptr_t*)(ptr1 + 0x4);
+                rawStr = ReadStringFromMemory(strPtr);
+                if (!rawStr.empty()) {
+                    return rawStr;
+                }
+            }
+        }
+    }
+
+    // Secondary Pointer (fallback): "nfs.exe" + 0x7309B4 -> +0x54
+    uintptr_t secondaryBase = baseModule + 0x7309B4;
+    if (IsBadReadPtr((void*)secondaryBase, sizeof(uintptr_t)) == 0) {
+        uintptr_t ptr2 = *(uintptr_t*)secondaryBase;
+        if (ptr2 != 0) {
+            // 1. Try direct string buffer at (ptr2 + 0x54)
+            std::string rawStr = ReadStringFromMemory(ptr2 + 0x54);
+            if (!rawStr.empty()) {
+                return rawStr;
+            }
+            // 2. Try dereferenced char* pointer at *(ptr2 + 0x54)
+            if (IsBadReadPtr((void*)(ptr2 + 0x54), sizeof(uintptr_t)) == 0) {
+                uintptr_t strPtr = *(uintptr_t*)(ptr2 + 0x54);
+                rawStr = ReadStringFromMemory(strPtr);
+                if (!rawStr.empty()) {
+                    return rawStr;
+                }
+            }
+        }
+    }
+
+    return "";
 }
 
 DWORD WINAPI DiscordThread(LPVOID param) {
@@ -42,9 +206,6 @@ DWORD WINAPI DiscordThread(LPVOID param) {
     int loop_count = 0;
 
     while (true) {
-        if (loop_count % 20 == 0) { // Log every 10 seconds (20 * 500ms)
-            printf("[ProStreetRPC] Discord thread is running.\n");
-        }
         loop_count++;
 
         try {
@@ -71,6 +232,22 @@ DWORD WINAPI DiscordThread(LPVOID param) {
                 }
             }
 
+            // Map pointer path
+            std::string rawMap = ReadRawMapIdentifier(baseModule);
+            std::string displayMap = TranslateMapIdentifier(rawMap);
+            bool hasMap = !displayMap.empty();
+
+            // Print the current map, if it changed
+            static std::string lastLoggedMap = "";
+            if (displayMap != lastLoggedMap) {
+                if (!displayMap.empty()) {
+                    printf("[ProStreetRPC] Current map: '%s'\n", displayMap.c_str());
+                } else {
+                    printf("[ProStreetRPC] Map cleared.\n");
+                }
+                lastLoggedMap = displayMap;
+            }
+
             unsigned long long money = 0;
             unsigned long long xp = 0;
 
@@ -85,7 +262,13 @@ DWORD WINAPI DiscordThread(LPVOID param) {
                 xp = *(unsigned long long*)xpAddr;
             }
 
-            if (hasMoney || hasXp) {
+            if (hasMap) {
+                activity.GetAssets().SetLargeText(displayMap.c_str());
+            } else {
+                activity.GetAssets().SetLargeText("NFS ProStreet v1.1");
+            }
+
+            if (hasMap || hasMoney || hasXp) {
                 if (hasMoney) {
                     std::string formatted_balance = format_with_commas(money);
                     activity.SetState((formatted_balance + "$").c_str());
@@ -93,18 +276,28 @@ DWORD WINAPI DiscordThread(LPVOID param) {
                     activity.SetState("Money: N/A");
                 }
 
-                if (hasXp) {
-                    std::string formatted_xp = format_with_commas(xp);
-                    activity.SetDetails(("Raceday: " + formatted_xp + " XP").c_str());
+                // Cycle between Map Name and Raceday XP every 5 seconds (10 loops * 500ms) on the first line (Details)
+                std::string detailsText = "";
+                if (hasMap && hasXp) {
+                    int cycle = (loop_count / 10) % 2;
+                    if (cycle == 0) {
+                        detailsText = displayMap;
+                    } else {
+                        detailsText = "Raceday: " + format_with_commas(xp) + " XP";
+                    }
+                } else if (hasMap) {
+                    detailsText = displayMap;
+                } else if (hasXp) {
+                    detailsText = "Raceday: " + format_with_commas(xp) + " XP";
                 } else {
-                    activity.SetDetails("Raceday: N/A XP");
+                    detailsText = "Navigating";
                 }
+                activity.SetDetails(detailsText.c_str());
 
             } else {
                 activity.SetState("In Menus");
                 activity.SetDetails("Navigating");
             }
-
 
             if (discordCore) {
                 discordCore->ActivityManager().UpdateActivity(activity, [](discord::Result res) {});
