@@ -52,12 +52,13 @@ To compile for Windows using a Linux host:
    cmake --build build --config Release
    ```
 
-## Game Requirements (Confirmed Working Setup)
+## Game & Executable Requirements
 
-To use this plugin, the following game setup is required and confirmed working:
-- **Game Version**: Need for Speed: ProStreet (Europe version) with 1.1 update.
-- **Executable Fix**: Battery 1.1 nocdfix.
-- **Multifix**: Multifix 1.1 (already includes a built-in ASI loader).
+This plugin was developed on and for the **v1.1 (Europe) "Battery 1.1 nocdfix"** executable layout. 
+
+- **Compatibility**: We cannot confirm if the plugin works on non-Battery v1.1 executables or other versions. Therefore, the Battery No-CD fix is considered required for the plugin's memory offsets to resolve correctly.
+- **Disclaimer**: This project does not promote or condone software piracy. The dependency on this specific executable is purely due to the memory addressing layout used during development. Users are expected to own a legitimate copy of the game.
+- **ASI Loader**: A loader (such as the one included in **Multifix 1.1**) is required to run the plugin.
 
 ## Installation
 
