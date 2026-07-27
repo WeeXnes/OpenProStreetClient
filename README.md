@@ -21,36 +21,53 @@ An ASI plugin that adds Discord Rich Presence integration to Need for Speed: Pro
 
 ## Building the Project
 
-### Windows (Native Build)
+The plugin must be built as a **32-bit (x86) Windows DLL** (named `.asi`). You can build it natively on Windows or cross-compile it on Linux.
 
-Configure the project for a 32-bit (x86) Windows target:
+### Option A: Linux (Cross-Compilation Build for Windows)
+This is the recommended method if you are developing on Linux. The project includes an automated script to handle everything.
+
+#### Prerequisites
+Install the MinGW-w64 toolchain, CMake, and Make. For example, on Arch Linux:
 ```bash
-cmake -B build -A Win32 -DCMAKE_TOOLCHAIN_FILE=[path-to-vcpkg]/scripts/buildsystems/vcpkg.cmake
+sudo pacman -S mingw-w64-gcc cmake make curl unzip
 ```
 
-Build the project in Release configuration:
-```bash
-cmake --build build --config Release
-```
-
-The output files (`ProStreetRPC.asi` and `discord_game_sdk.dll`) will be created in the `build/Release/` directory.
-
-### Linux (Cross-Compilation Build)
-
-To compile for Windows using a Linux host:
-
-1. Install the `mingw-w64` cross-compiler toolchain.
-2. Install the `discord-game-sdk` dependency using vcpkg for MinGW:
+#### Build Steps
+1. Run the build script in the root directory:
    ```bash
-   vcpkg install discord-game-sdk:x86-mingw-dynamic
+   bash build.sh
    ```
-3. Configure and build using a MinGW toolchain:
-   ```bash
-   cmake -B build \
-     -DCMAKE_TOOLCHAIN_FILE=[path-to-vcpkg]/scripts/buildsystems/vcpkg.cmake \
-     -DVCPKG_TARGET_TRIPLET=x86-mingw-dynamic
+2. The script will automatically:
+   - Download and extract the official Discord Game SDK v2.5.6 into `thirdparty/`.
+   - Configure CMake using the `mingw-w64-i686.cmake` toolchain.
+   - Build the C++ SDK wrapper and target project.
+   - Copy the 32-bit `discord_game_sdk.dll` alongside the compiled `ProStreetRPC.asi` in the `build/` directory.
+
+---
+
+### Option B: Windows (Native Build)
+If you prefer to build natively on Windows, you will use Microsoft Visual Studio and `vcpkg`.
+
+#### Prerequisites
+1. **Visual Studio** (with the C++ Desktop Development workload installed).
+2. **CMake** (version 3.10 or higher).
+3. **vcpkg** package manager with the `discord-game-sdk` package installed for target `x86-windows`:
+   ```cmd
+   vcpkg install discord-game-sdk:x86-windows
+   ```
+
+#### Build Steps
+1. Configure the project for a 32-bit (x86) target using the vcpkg toolchain:
+   ```cmd
+   cmake -B build -A Win32 -DCMAKE_TOOLCHAIN_FILE=[path-to-vcpkg]/scripts/buildsystems/vcpkg.cmake
+   ```
+2. Build the project in Release configuration:
+   ```cmd
    cmake --build build --config Release
    ```
+3. The output files (`ProStreetRPC.asi` and `discord_game_sdk.dll`) will be created in the `build/Release/` directory.
+
+---
 
 ## Game & Executable Requirements
 

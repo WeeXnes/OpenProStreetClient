@@ -1,0 +1,5 @@
+# Build directory
+build/
+
+# Downloaded thirdparty libraries
+thirdparty/
