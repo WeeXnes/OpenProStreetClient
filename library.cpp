@@ -475,6 +475,10 @@ namespace LANFix
         PatchCall(loc_823C54, (uintptr_t)DataConnectionHook);
 
         printf("[ProStreetRPC] Win11 LAN Fix applied successfully! (ptrDataConnection: 0x%p, hook Call: 0x%p)\n", (void*)ptrDataConnection, (void*)loc_823C54);
+        printf("-------------------------------------------------------------------\n");
+        printf("[ProStreetRPC] LAN NOTICE: Leave the address bar empty in the\n");
+        printf("[ProStreetRPC] LAN game menu to automatically connect to weexnes.dev!\n");
+        printf("-------------------------------------------------------------------\n");
     }
 }
 
