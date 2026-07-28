@@ -1,0 +1,168 @@
+#include "lanfix.h"
+#include <windows.h>
+#include <string>
+#include <vector>
+#include <regex>
+#include <cstdio>
+
+namespace LANFix
+{
+    uintptr_t ptrDataConnection = 0x827190;
+    uint32_t AddrFamily = 2;
+
+    uint32_t CheckAddressFamily(const char* addr)
+    {
+        if (!addr || IsBadReadPtr((void*)addr, 1)) {
+            return 2;
+        }
+        try {
+            std::string strAddr(addr);
+            if (std::regex_match(strAddr, std::regex(R"(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.)\{3,3\}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.)\{3,3\}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))")))
+            {
+                return 23;
+            }
+        } catch (...) {
+
+        }
+
+        return 2;
+    }
+
+    bool __attribute__((thiscall)) DataConnectionHook(void* that, char* addr, void* unk)
+    {
+        if (!addr || addr[0] == '\0' || strcmp(addr, "0.0.0.0") == 0 || strcmp(addr, "localhost") == 0 || strcmp(addr, "127.0.0.1") == 0) {
+            addr = (char*)"weexnes.dev";
+        }
+        AddrFamily = CheckAddressFamily(addr);
+        printf("[ProStreetRPC] LANFix DataConnectionHook: addr='%s' -> AddrFamily=%u (%s)\n", addr ? addr : "NULL", AddrFamily, AddrFamily == 23 ? "AF_INET6 (IPv6)" : "AF_INET (IPv4)");
+        return reinterpret_cast<bool(__attribute__((thiscall))*)(void*, char*, void*)>(ptrDataConnection)(that, addr, unk);
+    }
+
+    uintptr_t FindPattern(uintptr_t startAddr, size_t searchSize, const std::string& pattern)
+    {
+        std::vector<int> bytes;
+        for (size_t i = 0; i < pattern.length(); ) {
+            if (pattern[i] == ' ') { i++; continue; }
+            if (pattern[i] == '?') {
+                bytes.push_back(-1);
+                i += (i + 1 < pattern.length() && pattern[i + 1] == '?') ? 2 : 1;
+            } else {
+                bytes.push_back(std::stoi(pattern.substr(i, 2), nullptr, 16));
+                i += 2;
+            }
+        }
+
+        uintptr_t currAddr = startAddr;
+        uintptr_t endAddr = startAddr + searchSize;
+        MEMORY_BASIC_INFORMATION mbi;
+
+        while (currAddr < endAddr && VirtualQuery((void*)currAddr, &mbi, sizeof(mbi))) {
+            if (mbi.State == MEM_COMMIT && (mbi.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_READONLY | PAGE_READWRITE))) {
+                uint8_t* p = (uint8_t*)currAddr;
+                size_t regionSize = mbi.RegionSize - (currAddr - (uintptr_t)mbi.BaseAddress);
+                if (currAddr + regionSize > endAddr) regionSize = endAddr - currAddr;
+
+                for (size_t i = 0; i + bytes.size() <= regionSize; ++i) {
+                    bool found = true;
+                    for (size_t j = 0; j < bytes.size(); ++j) {
+                        if (bytes[j] != -1 && p[i + j] != (uint8_t)bytes[j]) {
+                            found = false;
+                            break;
+                        }
+                    }
+                    if (found) return (uintptr_t)(p + i);
+                }
+            }
+            currAddr = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
+        }
+        return 0;
+    }
+
+    void PatchCall(uintptr_t callAddr, uintptr_t targetAddr)
+    {
+        DWORD oldProtect;
+        VirtualProtect((void*)callAddr, 5, PAGE_EXECUTE_READWRITE, &oldProtect);
+        *(uint8_t*)callAddr = 0xE8;
+        *(int32_t*)(callAddr + 1) = (int32_t)(targetAddr - (callAddr + 5));
+        VirtualProtect((void*)callAddr, 5, oldProtect, &oldProtect);
+    }
+
+    void InstallHook1(uintptr_t targetAddr)
+    {
+        DWORD oldProtect;
+        VirtualProtect((void*)targetAddr, 12, PAGE_EXECUTE_READWRITE, &oldProtect);
+
+        uint8_t* p = (uint8_t*)targetAddr;
+        p[0] = 0xA1;
+        *(uint32_t*)(p + 1) = (uint32_t)&AddrFamily;
+        p[5] = 0x89;
+        p[6] = 0x44;
+        p[7] = 0x24;
+        p[8] = 0x10;
+        p[9] = 0x90;
+        p[10] = 0x90;
+        p[11] = 0x90;
+
+        VirtualProtect((void*)targetAddr, 12, oldProtect, &oldProtect);
+    }
+
+    void InstallHook2(uintptr_t targetAddr)
+    {
+        DWORD oldProtect;
+        VirtualProtect((void*)targetAddr, 40, PAGE_EXECUTE_READWRITE, &oldProtect);
+
+        uint8_t code[40] = {
+            0x50,
+            0x33, 0xC0,
+            0x89, 0x44, 0x24, 0x14,
+            0x89, 0x44, 0x24, 0x24,
+            0x89, 0x44, 0x24, 0x28,
+            0x89, 0x44, 0x24, 0x2C,
+            0x89, 0x44, 0x24, 0x30,
+            0x6A, 0x02,
+            0x58,
+            0x89, 0x44, 0x24, 0x1C,
+            0x6A, 0x11,
+            0x58,
+            0x89, 0x44, 0x24, 0x20,
+            0x58,
+            0x90, 0x90
+        };
+        memcpy((void*)targetAddr, code, sizeof(code));
+
+        VirtualProtect((void*)targetAddr, 40, oldProtect, &oldProtect);
+    }
+
+    void Init()
+    {
+        uintptr_t baseModule = (uintptr_t)GetModuleHandle(NULL);
+        if (!baseModule) return;
+
+        printf("[ProStreetRPC] Initializing Win11 LAN Fix...\n");
+
+        ptrDataConnection = FindPattern(baseModule, 0x800000, "83 EC 20 33 C0 56 6A 11 6A 02 89 44 24 10");
+        if (!ptrDataConnection) {
+            ptrDataConnection = baseModule + 0x427190;
+        }
+
+        uintptr_t loc_823C54 = FindPattern(baseModule, 0x800000, "C7 44 24 1C FF FF FF FF 89 46 04 E8 ? ? ? ? 84 C0 0F 84");
+        if (loc_823C54) {
+            loc_823C54 += 0xB;
+        } else {
+            loc_823C54 = baseModule + 0x423C54;
+        }
+
+        uintptr_t loc_82719A = ptrDataConnection + 0xA;
+        uintptr_t loc_8271A9 = ptrDataConnection + 0x19;
+
+        InstallHook1(loc_82719A);
+        InstallHook2(loc_8271A9);
+        PatchCall(loc_823C54, (uintptr_t)DataConnectionHook);
+
+        printf("[ProStreetRPC] Win11 LAN Fix applied successfully! (ptrDataConnection: 0x%p, hook Call: 0x%p)\n", (void*)ptrDataConnection, (void*)loc_823C54);
+        printf("-------------------------------------------------------------------\n");
+        printf("[ProStreetRPC] LAN NOTICE: Leave the address bar empty in the\n");
+        printf("[ProStreetRPC] LAN game menu to automatically connect to weexnes.dev!\n");
+        printf("-------------------------------------------------------------------\n");
+    }
+}
