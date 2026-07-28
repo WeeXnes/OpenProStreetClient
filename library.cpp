@@ -344,6 +344,10 @@ namespace LANFix
 
     bool __attribute__((thiscall)) DataConnectionHook(void* that, char* addr, void* unk)
     {
+        // Automatically default to weexnes.dev if the address box is left empty or default!
+        if (!addr || addr[0] == '\0' || strcmp(addr, "0.0.0.0") == 0 || strcmp(addr, "localhost") == 0 || strcmp(addr, "127.0.0.1") == 0) {
+            addr = (char*)"weexnes.dev";
+        }
         AddrFamily = CheckAddressFamily(addr);
         printf("[ProStreetRPC] LANFix DataConnectionHook: addr='%s' -> AddrFamily=%u (%s)\n", addr ? addr : "NULL", AddrFamily, AddrFamily == 23 ? "AF_INET6 (IPv6)" : "AF_INET (IPv4)");
         return reinterpret_cast<bool(__attribute__((thiscall))*)(void*, char*, void*)>(ptrDataConnection)(that, addr, unk);
