@@ -1,12 +1,12 @@
-#include "discord_thread.h"
+#include "discord_rpc.h"
 #include "map.h"
 #include "utils.h"
 #include <cstdio>
 #include <thread>
 #include <chrono>
 
-DWORD WINAPI DiscordThread(LPVOID param) {
-    printf("[ProStreetRPC] Discord thread started.\n");
+DWORD WINAPI RpcThread(LPVOID param) {
+    printf("[ProStreetRPC] RPC thread started.\n");
     uintptr_t baseModule = (uintptr_t)GetModuleHandle(NULL);
     if (!baseModule) {
         printf("[ProStreetRPC] Failed to get base module.\n");

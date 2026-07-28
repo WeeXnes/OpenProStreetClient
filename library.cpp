@@ -1,6 +1,6 @@
 #include "library.h"
 #include "lanfix.h"
-#include "discord_thread.h"
+#include "discord_rpc.h"
 #include <cstdio>
 #include <windows.h>
 #include <discord.h>
@@ -8,7 +8,7 @@
 
 discord::Core* discordCore = nullptr;
 
-const std::string version = "2.4";
+const std::string version = "2.5";
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
     if (ul_reason_for_call == DLL_PROCESS_ATTACH) {
@@ -33,12 +33,12 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
         }
         printf("[ProStreetRPC] Discord core created successfully.\n");
 
-        HANDLE hThread = CreateThread(NULL, 0, DiscordThread, NULL, 0, NULL);
+        HANDLE hThread = CreateThread(NULL, 0, RpcThread, NULL, 0, NULL);
         if (hThread) {
-            printf("[ProStreetRPC] Discord thread created successfully.\n");
+            printf("[ProStreetRPC] RPC thread created successfully.\n");
             CloseHandle(hThread);
         } else {
-            printf("[ProStreetRPC] Failed to create Discord thread.\n");
+            printf("[ProStreetRPC] Failed to create RPC thread.\n");
         }
     }
 
