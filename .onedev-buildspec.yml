@@ -1,0 +1,111 @@
+version: 43
+jobs:
+- name: Get Version (private)
+  steps:
+  - type: CheckoutStep
+    name: checkout code
+    cloneCredential:
+      type: DefaultCredential
+    withLfs: false
+    withSubmodules: false
+    condition: SUCCESSFUL
+    optional: false
+  - type: CommandStep
+    name: get version
+    runInContainer: false
+    interpreter:
+      type: DefaultInterpreter
+      commands: |
+        echo "Extracting version from library.cpp..."
+        grep -oP 'const std::string version = "\K[^"]+' library.cpp > version.txt || echo "1.0" > version.txt
+        echo "Version extracted: $(cat version.txt)"
+    useTTY: true
+    condition: SUCCESSFUL
+    optional: false
+  - type: CommandStep
+    name: check if tag exists
+    runInContainer: false
+    interpreter:
+      type: DefaultInterpreter
+      commands: |
+        version=$(cat version.txt)
+        echo "Checking if tag '$version' exists on origin..."
+
+        if git ls-remote --tags origin | grep -q "refs/tags/${version}$"; then
+            echo "Tag '$version' already exists."
+
+            new_version="${version}-@commit_hash@"
+            echo "$new_version" > version.txt
+            echo "Updated version.txt to '$new_version' to avoid tag conflict."
+
+            exit 1
+        else
+            echo "Tag '$version' does not exist. Proceeding with original version."
+            exit 0
+        fi
+    useTTY: true
+    condition: SUCCESSFUL
+    optional: false
+  - type: SetBuildVersionStep
+    name: set build version
+    buildVersion: '@file:version.txt@'
+    condition: ALWAYS
+    optional: false
+  - type: CreateTagStep
+    name: create tag
+    tagName: '@file:version.txt@'
+    tagMessage: Release Tag for @file:version.txt@
+    condition: SUCCESSFUL
+    optional: false
+  jobExecutor: Builder
+  triggers:
+  - type: BranchUpdateTrigger
+    userMatch: anyone
+  - type: PullRequestUpdateTrigger
+  retryCondition: never
+  maxRetries: 3
+  retryDelay: 30
+  timeout: 14400
+- name: Build Release Tag
+  steps:
+  - type: CheckoutStep
+    name: checkout code
+    cloneCredential:
+      type: DefaultCredential
+    withLfs: false
+    withSubmodules: false
+    condition: SUCCESSFUL
+    optional: false
+  - type: SetBuildVersionStep
+    name: set build version
+    buildVersion: '@tag@'
+    condition: ALWAYS
+    optional: false
+  - type: CommandStep
+    name: Cross-Compile Windows x86 ASI Plugin
+    runInContainer: false
+    interpreter:
+      type: DefaultInterpreter
+      commands: |
+        chmod +x ./build.sh
+        ./build.sh
+        mkdir -p ./release
+        cp build/ProStreetRPC.asi ./release/
+        cp build/discord_game_sdk.dll ./release/
+        cp build/ProStreetRPC_v*.zip ./release/
+    useTTY: true
+    condition: ALWAYS
+    optional: false
+  - type: PublishArtifactStep
+    name: Upload Artifacts
+    sourcePath: release
+    artifacts: '**'
+    condition: ALWAYS
+    optional: false
+  jobExecutor: Builder
+  triggers:
+  - type: TagCreateTrigger
+  retryCondition: never
+  maxRetries: 3
+  retryDelay: 30
+  timeout: 14400
