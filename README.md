@@ -1,87 +1,71 @@
 # ProStreetRPC
 
-An ASI plugin that adds Discord Rich Presence integration to Need for Speed: ProStreet.
+> Discord Rich Presence ASI plugin for Need for Speed: ProStreet.
 
-## Features
+[![Download Artifacts](https://img.shields.io/badge/Download-Artifacts-blue?style=for-the-badge&logo=package)](https://weexnes.dev/project/ProStreetRPC#artifacts)
+[![Repository](https://img.shields.io/badge/Git-Repository-orange?style=for-the-badge&logo=git)](https://code.weexnes.dev/ProStreetRPC)
 
-- **Dynamic Status**: Shows whether you are in a race day, navigating menus, or in main menus.
-- **Detailed Stats**: Displays your current career money and Raceday XP (automatically formatted with commas).
-- **Map Identification**: Detects the current map and translates raw internal map identifiers to human-readable names (e.g., "Nevada Highway", "Chicago Airfield").
-- **Dynamic Details**: Automatically cycles the Discord details line between the active track name and Raceday XP when in a race.
-- **Safe Memory Reading**: Validates pointers and handles memory reading safely to prevent game crashes.
+---
 
-## Prerequisites
+## 📦 Downloads & Releases
 
-- **CMake** (version 3.10 or higher)
-- **Visual Studio** (with C++ Desktop Development workload)
-- **vcpkg** with the `discord-game-sdk` package installed for target `x86-windows`:
-  ```bash
-  vcpkg install discord-game-sdk:x86-windows
-  ```
+Pre-compiled release bundles (`ProStreetRPC_v*.zip`) containing the ASI plugin and `discord_game_sdk.dll` can be downloaded directly from:
+👉 **[https://weexnes.dev/project/ProStreetRPC#artifacts](https://weexnes.dev/project/ProStreetRPC#artifacts)**
 
-## Building the Project
+---
 
-The plugin must be built as a **32-bit (x86) Windows DLL** (named `.asi`). You can build it natively on Windows or cross-compile it on Linux.
+## 🚀 Features
 
-### Option A: Linux (Cross-Compilation Build for Windows)
-This is the recommended method if you are developing on Linux. The project includes an automated script to handle everything.
+- **Dynamic Status**: Displays whether you are in a race day, navigating menus, or in main menus.
+- **Detailed Stats**: Shows your current career money and Raceday XP (formatted with commas).
+- **Map Identification**: Detects the current track/map and translates internal identifiers to human-readable names (e.g. "Nevada Highway", "Chicago Airfield").
+- **Dynamic Details**: Automatically cycles Discord details line between track name and Raceday XP during races.
+- **Safe Memory Management**: Validates pointers and handles memory reading safely to prevent game crashes.
 
-#### Prerequisites
-Install the MinGW-w64 toolchain, CMake, and Make. For example, on Arch Linux:
+---
+
+## 🕹️ Game & Executable Requirements
+
+This plugin was developed for the **v1.1 (Europe) "Battery 1.1 nocdfix"** executable layout.
+
+- **Compatibility**: Battery No-CD fix is recommended for exact memory address offset resolution.
+- **ASI Loader**: Requires an ASI loader (such as the one included in **Multifix 1.1**) to auto-load plugins from the `scripts` folder.
+- **Disclaimer**: This project does not promote software piracy; ownership of a legitimate copy of the game is expected.
+
+---
+
+## 🛠️ Installation
+
+1. Download the latest release from [weexnes.dev Artifacts](https://weexnes.dev/project/ProStreetRPC#artifacts).
+2. Extract the archive contents:
+   - Place `ProStreetRPC.asi` into your NFS ProStreet `scripts/` directory (`<prostreet-root>/scripts/ProStreetRPC.asi`).
+   - Place `discord_game_sdk.dll` into your main NFS ProStreet root directory (where `nfs.exe` is located).
+3. Ensure Discord is running and launch NFS ProStreet!
+
+---
+
+## 💻 Building from Source
+
+### Option A: Linux Cross-Compilation (Recommended)
 ```bash
+# Install dependencies (MinGW-w64 toolchain, CMake, Make, curl, unzip)
 sudo pacman -S mingw-w64-gcc cmake make curl unzip
+
+# Run automated cross-build script
+bash build.sh
+```
+Output binaries and release zip will be placed in `build/`.
+
+### Option B: Windows Native Build (Visual Studio & vcpkg)
+```cmd
+vcpkg install discord-game-sdk:x86-windows
+cmake -B build -A Win32 -DCMAKE_TOOLCHAIN_FILE=[path-to-vcpkg]/scripts/buildsystems/vcpkg.cmake
+cmake --build build --config Release
 ```
 
-#### Build Steps
-1. Run the build script in the root directory:
-   ```bash
-   bash build.sh
-   ```
-2. The script will automatically:
-   - Download and extract the official Discord Game SDK v2.5.6 into `thirdparty/`.
-   - Configure CMake using the `mingw-w64-i686.cmake` toolchain.
-   - Build the C++ SDK wrapper and target project.
-   - Copy the 32-bit `discord_game_sdk.dll` alongside the compiled `ProStreetRPC.asi` in the `build/` directory.
-
 ---
 
-### Option B: Windows (Native Build)
-If you prefer to build natively on Windows, you will use Microsoft Visual Studio and `vcpkg`.
+## 📜 License & Repository
 
-#### Prerequisites
-1. **Visual Studio** (with the C++ Desktop Development workload installed).
-2. **CMake** (version 3.10 or higher).
-3. **vcpkg** package manager with the `discord-game-sdk` package installed for target `x86-windows`:
-   ```cmd
-   vcpkg install discord-game-sdk:x86-windows
-   ```
-
-#### Build Steps
-1. Configure the project for a 32-bit (x86) target using the vcpkg toolchain:
-   ```cmd
-   cmake -B build -A Win32 -DCMAKE_TOOLCHAIN_FILE=[path-to-vcpkg]/scripts/buildsystems/vcpkg.cmake
-   ```
-2. Build the project in Release configuration:
-   ```cmd
-   cmake --build build --config Release
-   ```
-3. The output files (`ProStreetRPC.asi` and `discord_game_sdk.dll`) will be created in the `build/Release/` directory.
-
----
-
-## Game & Executable Requirements
-
-This plugin was developed on and for the **v1.1 (Europe) "Battery 1.1 nocdfix"** executable layout. 
-
-- **Compatibility**: We cannot confirm if the plugin works on non-Battery v1.1 executables or other versions. Therefore, the Battery No-CD fix is considered required for the plugin's memory offsets to resolve correctly.
-- **Disclaimer**: This project does not promote or condone software piracy. The dependency on this specific executable is purely due to the memory addressing layout used during development. Users are expected to own a legitimate copy of the game.
-- **ASI Loader**: A loader (such as the one included in **Multifix 1.1**) is required to run the plugin.
-
-## Installation
-
-1. Ensure the `scripts` folder exists in your Need for Speed: ProStreet root directory (where `nfs.exe` is located): `<prostreet-root>/scripts/`.
-2. Place `ProStreetRPC.asi` into the `scripts` folder (i.e. `<prostreet-root>/scripts/ProStreetRPC.asi`).
-3. Place `discord_game_sdk.dll` into your Need for Speed: ProStreet root directory (where `nfs.exe` is located).
-4. No external ASI loader is needed (Multifix 1.1 handles loading ASI plugins from the `scripts` directory automatically).
-5. Start Discord, launch the game, and enjoy!
-
+- **Repository**: [https://code.weexnes.dev/ProStreetRPC](https://code.weexnes.dev/ProStreetRPC)
+- **Part of the Need for Speed: ProStreet Modding Ecosystem**
