@@ -18,6 +18,7 @@ enum RaceTrackerState {
 static RaceTrackerState g_trackerState = TRACKER_IDLE;
 static uint32_t g_lastFinishedEventId = 0;
 static float g_lastTotalTime = 0.0f;
+static time_t g_lastLogTimestamp = 0;
 
 static std::string FormatSecondsToTime(float seconds) {
     if (seconds <= 0.0f || seconds > 36000.0f) {
@@ -85,20 +86,27 @@ void UpdateRaceResultsTracker(uintptr_t baseModule) {
     }
 
     uintptr_t gRaceStatus = *(uintptr_t*)gRaceStatusBase;
-    if (gRaceStatus == 0 || IsBadReadPtr((void*)gRaceStatus, 0x2D10) != 0) {
+    if (gRaceStatus == 0 || IsBadReadPtr((void*)gRaceStatus, 0x100) != 0) {
         g_trackerState = TRACKER_IDLE;
         return;
     }
 
-    // Check race status state (0x2CFC: 1 = in race, 2 = race over)
-    uint32_t raceState = *(uint32_t*)(gRaceStatus + 0x2CFC);
-    uint32_t numRacers = *(uint32_t*)(gRaceStatus + 0x2CE0);
+    // Check race status state (0x2CFC: 0 = in active race, 1/2 = post-race / finished / menus)
+    uint32_t raceState = 0;
+    if (IsBadReadPtr((void*)(gRaceStatus + 0x2CFC), sizeof(uint32_t)) == 0) {
+        raceState = *(uint32_t*)(gRaceStatus + 0x2CFC);
+    }
+
+    uint32_t numRacers = 1;
+    if (IsBadReadPtr((void*)(gRaceStatus + 0x2CE0), sizeof(uint32_t)) == 0) {
+        numRacers = *(uint32_t*)(gRaceStatus + 0x2CE0);
+    }
 
     // Locate the local human player racer slot
     uintptr_t playerRacer = 0;
     for (uint32_t i = 0; i < numRacers && i < 8; ++i) {
         uintptr_t racer = gRaceStatus + 0x20 + (i * 0x594);
-        if (IsBadReadPtr((void*)racer, 0x80)) break;
+        if (IsBadReadPtr((void*)racer, 0x70)) break;
 
         uint32_t flags = *(uint32_t*)(racer + 0x68);
         if (flags & 0x02) { // Local human player
@@ -107,8 +115,7 @@ void UpdateRaceResultsTracker(uintptr_t baseModule) {
         }
     }
 
-    // Fallback to slot 0 if flags not found
-    if (!playerRacer && IsBadReadPtr((void*)(gRaceStatus + 0x20), 0x80) == 0) {
+    if (!playerRacer && IsBadReadPtr((void*)(gRaceStatus + 0x20), 0x70) == 0) {
         playerRacer = gRaceStatus + 0x20;
     }
 
@@ -117,43 +124,52 @@ void UpdateRaceResultsTracker(uintptr_t baseModule) {
         return;
     }
 
-    // State management:
-    // When racing starts:
-    if (raceState == 1) {
+    // Read timing flags
+    float liveLapTime = 0.0f;
+    float finishDelta = 0.0f;
+    float lap0 = 0.0f;
+
+    if (IsBadReadPtr((void*)(playerRacer + 0x428), sizeof(float)) == 0) {
+        liveLapTime = *(float*)(playerRacer + 0x428);
+    }
+    if (IsBadReadPtr((void*)(playerRacer + 0x458), sizeof(float)) == 0) {
+        finishDelta = *(float*)(playerRacer + 0x458);
+    }
+    if (IsBadReadPtr((void*)(playerRacer + 0x8C), sizeof(float)) == 0) {
+        lap0 = *(float*)(playerRacer + 0x8C);
+    }
+
+    // State 1: Active in-race detection
+    if (raceState == 0 || liveLapTime > 0.001f) {
         if (g_trackerState != TRACKER_RACING) {
             g_trackerState = TRACKER_RACING;
         }
     }
 
-    // Check for race completion transition:
-    // Either global raceState == 2 OR racer is finished while we were in TRACKER_RACING
-    bool isRacerFinished = false;
-    if (raceState == 2) {
-        isRacerFinished = true;
-    } else if (g_trackerState == TRACKER_RACING) {
-        // Check if player vehicle has crossed the finish line
-        uintptr_t pVehicle = *(uintptr_t*)(playerRacer + 0x0C);
-        if (pVehicle != 0 && !IsBadReadPtr((void*)pVehicle, 0x70)) {
-            // In drift, score > 0 and state transitions
-            float driftScore = *(float*)(pVehicle + 0x6C);
-            if (driftScore > 0.0f && raceState == 2) {
-                isRacerFinished = true;
-            }
-        }
-    }
+    // State 2: Race completion detection
+    bool isRaceOver = (raceState != 0);
+    bool hasCompletedTime = (finishDelta > 0.001f || (lap0 > 0.001f && lap0 < 36000.0f));
 
-    if (isRacerFinished && g_trackerState == TRACKER_RACING) {
+    if ((isRaceOver || hasCompletedTime) && g_trackerState == TRACKER_RACING) {
         g_trackerState = TRACKER_FINISHED;
+
+        time_t now = time(nullptr);
+        // Throttle to avoid duplicate logs in the same 5 seconds
+        if (now - g_lastLogTimestamp < 5 && g_lastLogTimestamp != 0) {
+            return;
+        }
 
         // 1. Read Event ID / Hash
         uint32_t rawEventHash = 0;
-        uintptr_t raceObj = *(uintptr_t*)(gRaceStatus + 0x2D04);
-        if (raceObj != 0 && !IsBadReadPtr((void*)raceObj, 0x10)) {
-            uintptr_t eventData = *(uintptr_t*)(raceObj + 0x04);
-            if (eventData != 0 && !IsBadReadPtr((void*)eventData, 0x10)) {
-                rawEventHash = *(uint32_t*)(eventData + 0x00);
-                if (rawEventHash == 0) {
-                    rawEventHash = *(uint32_t*)(eventData + 0x04);
+        if (IsBadReadPtr((void*)(gRaceStatus + 0x2D04), sizeof(uintptr_t)) == 0) {
+            uintptr_t raceObj = *(uintptr_t*)(gRaceStatus + 0x2D04);
+            if (raceObj != 0 && IsBadReadPtr((void*)raceObj, 0x10) == 0) {
+                uintptr_t eventData = *(uintptr_t*)(raceObj + 0x04);
+                if (eventData != 0 && IsBadReadPtr((void*)eventData, 0x10) == 0) {
+                    rawEventHash = *(uint32_t*)(eventData + 0x00);
+                    if (rawEventHash == 0) {
+                        rawEventHash = *(uint32_t*)(eventData + 0x04);
+                    }
                 }
             }
         }
@@ -162,7 +178,7 @@ void UpdateRaceResultsTracker(uintptr_t baseModule) {
         if (rawEventHash != 0) {
             eventIdHex << "0x" << std::uppercase << std::hex << std::setfill('0') << std::setw(8) << rawEventHash;
         } else {
-            eventIdHex << "EVENT_GENERIC";
+            eventIdHex << "EVENT_ACTIVE";
         }
 
         // 2. Track & Mode & Car
@@ -173,20 +189,22 @@ void UpdateRaceResultsTracker(uintptr_t baseModule) {
         std::string displayCar = TranslateCarIdentifier(rawCar);
 
         // 3. Timing and Laps
-        float totalTime = *(float*)(playerRacer + 0x428);
-        if (totalTime <= 0.0f) {
-            totalTime = *(float*)(playerRacer + 0x458);
+        float totalTime = liveLapTime;
+        if (finishDelta > 0.001f && finishDelta < 36000.0f) {
+            totalTime = finishDelta;
         }
 
         std::vector<float> lapTimes;
         float bestLap = 0.0f;
 
         for (int off = 0x8C; off <= 0xCC; off += 4) {
-            float lap = *(float*)(playerRacer + off);
-            if (lap > 0.001f && lap < 36000.0f) {
-                lapTimes.push_back(lap);
-                if (bestLap <= 0.0f || lap < bestLap) {
-                    bestLap = lap;
+            if (IsBadReadPtr((void*)(playerRacer + off), sizeof(float)) == 0) {
+                float lap = *(float*)(playerRacer + off);
+                if (lap > 0.001f && lap < 36000.0f) {
+                    lapTimes.push_back(lap);
+                    if (bestLap <= 0.0f || lap < bestLap) {
+                        bestLap = lap;
+                    }
                 }
             }
         }
@@ -198,22 +216,23 @@ void UpdateRaceResultsTracker(uintptr_t baseModule) {
         // 4. Score
         float score = 0.0f;
         uintptr_t pVehicle = *(uintptr_t*)(playerRacer + 0x0C);
-        if (pVehicle != 0 && !IsBadReadPtr((void*)(pVehicle + 0x6C), sizeof(float))) {
+        if (pVehicle != 0 && IsBadReadPtr((void*)(pVehicle + 0x6C), sizeof(float)) == 0) {
             float driftScore = *(float*)(pVehicle + 0x6C);
             if (driftScore > 0.0f) {
                 score = driftScore;
             }
         }
 
-        int position = 1; // Player 0 default
+        int position = 1;
 
-        // Prevent duplicate trigger for identical time/event
+        // Skip duplicate records
         if (rawEventHash == g_lastFinishedEventId && totalTime == g_lastTotalTime && totalTime > 0.0f) {
             return;
         }
 
         g_lastFinishedEventId = rawEventHash;
         g_lastTotalTime = totalTime;
+        g_lastLogTimestamp = now;
 
         RaceResult res;
         res.eventId = eventIdHex.str();
@@ -227,9 +246,9 @@ void UpdateRaceResultsTracker(uintptr_t baseModule) {
         res.bestLapSeconds = (bestLap > 0.0f) ? bestLap : totalTime;
         res.lapTimes = lapTimes;
         res.score = score;
-        res.timestamp = (uint64_t)time(nullptr);
+        res.timestamp = (uint64_t)now;
 
-        // Print formatted result to console
+        // Formatted Console Output
         printf("\n============================================================\n");
         printf("[ProStreetRPC] === RACE FINISHED ===\n");
         printf("[ProStreetRPC] Event ID:      %s\n", res.eventId.c_str());
@@ -238,7 +257,7 @@ void UpdateRaceResultsTracker(uintptr_t baseModule) {
         printf("[ProStreetRPC] Car:           %s\n", res.carName.c_str());
         printf("[ProStreetRPC] Position:      %s\n", FormatPosition(res.position).c_str());
         printf("[ProStreetRPC] Total Time:    %s (%.3fs)\n", FormatSecondsToTime(res.totalTimeSeconds).c_str(), res.totalTimeSeconds);
-        if (res.bestLapSeconds > 0.0f) {
+        if (res.bestLapSeconds > 0.0f && res.bestLapSeconds != res.totalTimeSeconds) {
             printf("[ProStreetRPC] Best Lap:      %s (%.3fs)\n", FormatSecondsToTime(res.bestLapSeconds).c_str(), res.bestLapSeconds);
         }
         if (res.score > 0.0f) {
@@ -246,7 +265,7 @@ void UpdateRaceResultsTracker(uintptr_t baseModule) {
         }
         printf("============================================================\n\n");
 
-        // Save to JSONL
+        // Save JSONL record
         SaveRaceResultToJson(res);
     }
 }
