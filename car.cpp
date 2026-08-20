@@ -16,6 +16,7 @@ static const std::unordered_map<std::string, std::string> CAR_TRANSLATION_TABLE 
     {"TT", "Audi TT 3.2 quattro"},
     {"R8", "Audi R8"},
     {"AUDI_R8", "Audi R8"},
+    {"AUDIR8", "Audi R8"},
 
     // BMW
     {"E46", "BMW M3 (E46)"},
@@ -174,6 +175,27 @@ static const std::unordered_map<std::string, std::string> CAR_TRANSLATION_TABLE 
     {"R32", "Volkswagen Golf R32"}
 };
 
+static bool IsKnownCarKey(const std::string& key) {
+    if (key.length() < 2 || key.length() > 32) return false;
+
+    std::string upper = key;
+    std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) {
+        return std::toupper(c);
+    });
+
+    if (CAR_TRANSLATION_TABLE.find(upper) != CAR_TRANSLATION_TABLE.end()) {
+        return true;
+    }
+
+    for (const auto& pair : CAR_TRANSLATION_TABLE) {
+        if (upper == pair.first || upper.find(pair.first) != std::string::npos) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static std::string ReadSafeString(uintptr_t strPtr, size_t maxLen = 32) {
     if (!strPtr || IsBadReadPtr((void*)strPtr, 1)) {
         return "";
@@ -189,7 +211,7 @@ static std::string ReadSafeString(uintptr_t strPtr, size_t maxLen = 32) {
         if (c == '\0') {
             break;
         }
-        // Valid car ID characters (alphanumeric, underscore, hyphen)
+        // Valid car ID characters
         if (isalnum((unsigned char)c) || c == '_' || c == '-') {
             result.push_back(c);
         } else {
@@ -197,37 +219,33 @@ static std::string ReadSafeString(uintptr_t strPtr, size_t maxLen = 32) {
         }
     }
 
-    if (result.length() < 2) {
-        return "";
-    }
-
     return result;
 }
 
-static std::string TryExtractCarString(uintptr_t ptr) {
+static std::string CheckCarPtr(uintptr_t ptr) {
     if (!ptr || IsBadReadPtr((void*)ptr, sizeof(uintptr_t))) {
         return "";
     }
 
-    // 1. Try reading ptr as a direct C-string pointer
+    // 1. Direct string check
     std::string str = ReadSafeString(ptr);
-    if (!str.empty() && str.length() >= 2) {
+    if (IsKnownCarKey(str)) {
         return str;
     }
 
-    // 2. Try reading *(ptr + 0x4) as a C-string pointer
+    // 2. Dereferenced +0x4 string check
     if (!IsBadReadPtr((void*)(ptr + 0x4), sizeof(uintptr_t))) {
         uintptr_t subPtr = *(uintptr_t*)(ptr + 0x4);
         str = ReadSafeString(subPtr);
-        if (!str.empty() && str.length() >= 2) {
+        if (IsKnownCarKey(str)) {
             return str;
         }
     }
 
-    // 3. Try reading *(ptr + 0x0) as a C-string pointer
+    // 3. Dereferenced +0x0 string check
     uintptr_t derefPtr = *(uintptr_t*)ptr;
     str = ReadSafeString(derefPtr);
-    if (!str.empty() && str.length() >= 2) {
+    if (IsKnownCarKey(str)) {
         return str;
     }
 
@@ -235,57 +253,29 @@ static std::string TryExtractCarString(uintptr_t ptr) {
 }
 
 std::string ReadRawCarIdentifier(uintptr_t baseModule) {
-    // 1. Check GRaceStatus singleton (0xAB9D7C) -> scan racers (0..7)
+    // 1. Scan GRaceStatus racers (0xAB9D7C)
     uintptr_t gRaceStatusBase = baseModule + 0x6B9D7C;
     if (IsBadReadPtr((void*)gRaceStatusBase, sizeof(uintptr_t)) == 0) {
         uintptr_t gRaceStatus = *(uintptr_t*)gRaceStatusBase;
         if (gRaceStatus != 0 && IsBadReadPtr((void*)(gRaceStatus + 0x20), 0x20) == 0) {
-            // First pass: look for local player racer (flags & 0x02 at racer + 0x68)
             for (int i = 0; i < 8; ++i) {
                 uintptr_t racer = gRaceStatus + 0x20 + (i * 0x594);
-                if (IsBadReadPtr((void*)racer, 0x70)) {
+                if (IsBadReadPtr((void*)racer, 0x80)) {
                     break;
                 }
 
-                uint32_t flags = *(uint32_t*)(racer + 0x68);
-                if (flags & 0x02) { // Local human player
-                    // Try offset 0x0C (car pointer / handle)
-                    uintptr_t ptr0c = *(uintptr_t*)(racer + 0x0C);
-                    std::string car = TryExtractCarString(ptr0c);
-                    if (!car.empty()) return car;
-
-                    // Try offset 0x10 (player pointer)
-                    uintptr_t ptr10 = *(uintptr_t*)(racer + 0x10);
-                    car = TryExtractCarString(ptr10);
-                    if (!car.empty()) return car;
-
-                    // Try offset 0x08, 0x14
-                    car = TryExtractCarString(*(uintptr_t*)(racer + 0x08));
-                    if (!car.empty()) return car;
-                    car = TryExtractCarString(*(uintptr_t*)(racer + 0x14));
+                // Check common vehicle/car pointer offsets in GRacerInfo
+                static const int racerOffsets[] = { 0x0C, 0x10, 0x08, 0x14, 0x04, 0x18, 0x20, 0x24, 0x28 };
+                for (int off : racerOffsets) {
+                    uintptr_t candidate = *(uintptr_t*)(racer + off);
+                    std::string car = CheckCarPtr(candidate);
                     if (!car.empty()) return car;
                 }
-            }
-
-            // Second pass: check racer 0, 1, 2...
-            for (int i = 0; i < 8; ++i) {
-                uintptr_t racer = gRaceStatus + 0x20 + (i * 0x594);
-                if (IsBadReadPtr((void*)racer, 0x70)) {
-                    break;
-                }
-
-                uintptr_t ptr0c = *(uintptr_t*)(racer + 0x0C);
-                std::string car = TryExtractCarString(ptr0c);
-                if (!car.empty()) return car;
-
-                uintptr_t ptr10 = *(uintptr_t*)(racer + 0x10);
-                car = TryExtractCarString(ptr10);
-                if (!car.empty()) return car;
             }
         }
     }
 
-    // 2. Check LocalPlayer array (0xACE444)
+    // 2. Scan LocalPlayer array (0xACE444)
     uintptr_t localPlayerCountBase = baseModule + 0x6CE44C;
     uintptr_t localPlayerArrayBase = baseModule + 0x6CE444;
     if (IsBadReadPtr((void*)localPlayerCountBase, sizeof(uintptr_t)) == 0 &&
@@ -294,15 +284,29 @@ std::string ReadRawCarIdentifier(uintptr_t baseModule) {
         uintptr_t arr = *(uintptr_t*)localPlayerArrayBase;
         if (count > 0 && arr != 0 && IsBadReadPtr((void*)arr, sizeof(uintptr_t)) == 0) {
             uintptr_t localPlayer0 = *(uintptr_t*)arr;
-            if (localPlayer0 != 0 && IsBadReadPtr((void*)localPlayer0, 0x60) == 0) {
-                std::string car = TryExtractCarString(*(uintptr_t*)(localPlayer0 + 0x28));
-                if (!car.empty()) return car;
+            if (localPlayer0 != 0 && IsBadReadPtr((void*)localPlayer0, 0x80) == 0) {
+                static const int playerOffsets[] = { 0x28, 0x14, 0x0C, 0x10, 0x18, 0x20, 0x24, 0x30, 0x34, 0x48 };
+                for (int off : playerOffsets) {
+                    uintptr_t candidate = *(uintptr_t*)(localPlayer0 + off);
+                    std::string car = CheckCarPtr(candidate);
+                    if (!car.empty()) return car;
+                }
+            }
+        }
+    }
 
-                car = TryExtractCarString(*(uintptr_t*)(localPlayer0 + 0x14));
-                if (!car.empty()) return car;
-
-                car = TryExtractCarString(*(uintptr_t*)(localPlayer0 + 0x0C));
-                if (!car.empty()) return car;
+    // 3. Scan primary/secondary base pointers (0x7309C0 / 0x7309B4)
+    static const uintptr_t extraBases[] = { 0x7309C0, 0x7309B4, 0x6B0EA8, 0x6BB060 };
+    for (uintptr_t baseOff : extraBases) {
+        uintptr_t ptrAddr = baseModule + baseOff;
+        if (IsBadReadPtr((void*)ptrAddr, sizeof(uintptr_t)) == 0) {
+            uintptr_t obj = *(uintptr_t*)ptrAddr;
+            if (obj != 0 && IsBadReadPtr((void*)obj, 0x80) == 0) {
+                for (int off = 0; off <= 0x80; off += 4) {
+                    uintptr_t candidate = *(uintptr_t*)(obj + off);
+                    std::string car = CheckCarPtr(candidate);
+                    if (!car.empty()) return car;
+                }
             }
         }
     }
@@ -325,9 +329,9 @@ std::string TranslateCarIdentifier(const std::string& rawIdentifier) {
         return it->second;
     }
 
-    // Check without prefix/suffix if any
+    // Check substring match
     for (const auto& pair : CAR_TRANSLATION_TABLE) {
-        if (upperKey.find(pair.first) != std::string::npos) {
+        if (upperKey == pair.first || upperKey.find(pair.first) != std::string::npos) {
             return pair.second;
         }
     }

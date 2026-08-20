@@ -20,25 +20,25 @@ static std::string TranslateRaceModeId(int8_t modeId) {
 
     switch (category) {
         case 1:
-            return "1/4 Mile Drag";
+            return "Speed Challenge";
         case 2:
-            return "1/2 Mile Drag";
+            return "Top Speed Run";
         case 3:
             return "Grip";
         case 4:
-            return "Drift";
-        case 5:
             return "Sector Shootout";
-        case 6:
+        case 5:
             return "Time Attack";
+        case 6:
+            return "1/2 Mile Drag";
         case 7:
-            return "Speed Challenge";
-        case 8:
-            return "Top Speed Run";
-        case 9:
             return "Wheelie Competition";
+        case 8:
+            return "Drift";
+        case 9:
+            return "1/4 Mile Drag";
         case 10:
-            return "Grip Class";
+            return "Grip";
         default:
             return "";
     }
