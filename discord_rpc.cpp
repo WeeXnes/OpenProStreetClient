@@ -2,6 +2,7 @@
 #include "map.h"
 #include "car.h"
 #include "race_mode.h"
+#include "race_results.h"
 #include "utils.h"
 #include <cstdio>
 #include <vector>
@@ -31,6 +32,9 @@ DWORD WINAPI RpcThread(LPVOID param) {
         loop_count++;
 
         try {
+            // Track race lifecycle and log finish results / event ID
+            UpdateRaceResultsTracker(baseModule);
+
             // Read Money
             uintptr_t moneyAddr = 0;
             uintptr_t moneyBasePtr = baseModule + 0x6B0EA8;
