@@ -8,7 +8,7 @@
 
 discord::Core* discordCore = nullptr;
 
-const std::string version = "2.6";
+const std::string version = "2.7";
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
     if (ul_reason_for_call == DLL_PROCESS_ATTACH) {
