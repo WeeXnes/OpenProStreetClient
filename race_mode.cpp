@@ -1,70 +1,45 @@
 #include "race_mode.h"
 
 // Maps the internal event/race mode ID from eventData + 0x23 to a human-readable name
+// using the exact game engine classifier table from 0x00657E10
 static std::string TranslateRaceModeId(int8_t modeId) {
-    switch (modeId) {
-        case 0:
+    if (modeId < 0 || modeId >= 36) {
+        return "";
+    }
+
+    static const uint8_t tbl[36] = {
+        0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 10,
+        5, 5, 5, 6, 6, 6, 10, 7, 7, 7, 8, 8, 8, 9, 9, 9, 10, 2, 1, 2
+    };
+
+    uint8_t case_idx = tbl[modeId];
+    static const int case_returns[11] = {
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, -1
+    };
+    int category = case_returns[case_idx];
+
+    switch (category) {
         case 1:
-        case 2:
-            return "Grip";
-
-        case 3:
             return "1/4 Mile Drag";
-        case 4:
+        case 2:
             return "1/2 Mile Drag";
-        case 5:
-        case 34:
-            return "Drag";
-
-        case 6:
-        case 7:
-        case 8:
-        case 33:
-        case 35:
+        case 3:
+            return "Grip";
+        case 4:
             return "Drift";
-
-        case 9:
-        case 10:
-        case 11:
-            return "Speed Challenge";
-
-        case 12:
-        case 13:
-        case 14:
-            return "Top Speed Run";
-
-        case 16:
-        case 17:
-        case 18:
+        case 5:
             return "Sector Shootout";
-
-        case 19:
-        case 20:
-        case 21:
-            return "Drag";
-
-        case 23:
-        case 24:
-        case 25:
+        case 6:
             return "Time Attack";
-
-        case 26:
-        case 27:
-        case 28:
+        case 7:
+            return "Speed Challenge";
+        case 8:
+            return "Top Speed Run";
+        case 9:
             return "Wheelie Competition";
-
-        case 15:
-        case 22:
-        case 29:
-        case 30:
-        case 31:
-        case 32:
+        case 10:
             return "Grip Class";
-
         default:
-            if (modeId >= 0) {
-                return "Race (Mode " + std::to_string(modeId) + ")";
-            }
             return "";
     }
 }

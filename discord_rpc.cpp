@@ -135,7 +135,7 @@ DWORD WINAPI RpcThread(LPVOID param) {
             if (hasCar) {
                 detailsCycle.push_back("Car: " + displayCar);
             }
-            if (hasXp && xp > 0) {
+            if (hasXp) {
                 detailsCycle.push_back("Raceday: " + format_with_commas(xp) + " XP");
             }
 
