@@ -16,10 +16,12 @@ Pre-compiled release bundles (`ProStreetRPC_v*.zip`) containing the ASI plugin a
 
 ## 🚀 Features
 
-- **Dynamic Status**: Displays whether you are in a race day, navigating menus, or in main menus.
-- **Detailed Stats**: Shows your current career money and Raceday XP (formatted with commas).
+- **Dynamic Status**: Displays whether you are in a race day, navigating menus, or in career.
+- **Player Car Display**: Detects the car currently driven by the player and translates internal models to real vehicle names (e.g. "Nissan GT-R (R35)", "Mazda RX-7", "Chevrolet Corvette Z06", "Toyota Supra").
+- **Race Mode & Event Type**: Identifies specific race types (e.g. "Grip", "Drift", "1/4 Mile Drag", "Wheelie Competition", "Speed Challenge", "Top Speed Run", "Sector Shootout", "Time Attack", "Grip Class").
+- **Detailed Stats**: Shows your current career balance and Raceday XP (formatted with commas).
 - **Map Identification**: Detects the current track/map and translates internal identifiers to human-readable names (e.g. "Nevada Highway", "Chicago Airfield").
-- **Dynamic Details**: Automatically cycles Discord details line between track name and Raceday XP during races.
+- **Dynamic Cycle**: Automatically cycles Discord details line between track name, race type, current car, and Raceday XP during gameplay.
 - **Safe Memory Management**: Validates pointers and handles memory reading safely to prevent game crashes.
 
 ---

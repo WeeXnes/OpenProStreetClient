@@ -17,7 +17,7 @@ if(EXISTS "${THIRDPARTY_SDK_DIR}")
     
     # Compile the Discord Game SDK C++ wrapper files directly from source
     add_library(ProStreetRPC SHARED 
-        library.cpp utils.cpp map.cpp lanfix.cpp discord_rpc.cpp
+        library.cpp utils.cpp map.cpp car.cpp race_mode.cpp lanfix.cpp discord_rpc.cpp
         ${DISCORD_SDK_SOURCES}
     )
     
@@ -47,7 +47,7 @@ if(EXISTS "${THIRDPARTY_SDK_DIR}")
     )
 else()
     # Traditional vcpkg setup for Windows builds
-    add_library(ProStreetRPC SHARED library.cpp utils.cpp map.cpp lanfix.cpp discord_rpc.cpp)
+    add_library(ProStreetRPC SHARED library.cpp utils.cpp map.cpp car.cpp race_mode.cpp lanfix.cpp discord_rpc.cpp)
     
     set(VCPKG_INSTALLED_DIR "C:/Users/WeeXnes/vcpkg/installed/x86-windows")
     

@@ -1,7 +1,10 @@
 #include "discord_rpc.h"
 #include "map.h"
+#include "car.h"
+#include "race_mode.h"
 #include "utils.h"
 #include <cstdio>
+#include <vector>
 #include <thread>
 #include <chrono>
 
@@ -28,7 +31,7 @@ DWORD WINAPI RpcThread(LPVOID param) {
         loop_count++;
 
         try {
-
+            // Read Money
             uintptr_t moneyAddr = 0;
             uintptr_t moneyBasePtr = baseModule + 0x6B0EA8;
             if (IsBadReadPtr((void*)moneyBasePtr, sizeof(uintptr_t)) == 0) {
@@ -38,6 +41,7 @@ DWORD WINAPI RpcThread(LPVOID param) {
                 }
             }
 
+            // Read Raceday XP
             uintptr_t xpAddr = 0;
             uintptr_t xpBasePtr = baseModule + 0x6B9FB8;
             if (IsBadReadPtr((void*)xpBasePtr, sizeof(uintptr_t)) == 0) {
@@ -50,6 +54,7 @@ DWORD WINAPI RpcThread(LPVOID param) {
                 }
             }
 
+            // Read Map
             std::string rawMap = ReadRawMapIdentifier(baseModule);
             std::string displayMap = TranslateMapIdentifier(rawMap);
             bool hasMap = !displayMap.empty();
@@ -62,6 +67,35 @@ DWORD WINAPI RpcThread(LPVOID param) {
                     printf("[ProStreetRPC] Map cleared.\n");
                 }
                 lastLoggedMap = displayMap;
+            }
+
+            // Read Car
+            std::string rawCar = ReadRawCarIdentifier(baseModule);
+            std::string displayCar = TranslateCarIdentifier(rawCar);
+            bool hasCar = !displayCar.empty();
+
+            static std::string lastLoggedCar = "";
+            if (displayCar != lastLoggedCar) {
+                if (!displayCar.empty()) {
+                    printf("[ProStreetRPC] Current car: '%s' (raw: '%s')\n", displayCar.c_str(), rawCar.c_str());
+                } else {
+                    printf("[ProStreetRPC] Car cleared.\n");
+                }
+                lastLoggedCar = displayCar;
+            }
+
+            // Read Race Mode
+            std::string raceMode = ReadRaceMode(baseModule);
+            bool hasRaceMode = !raceMode.empty();
+
+            static std::string lastLoggedMode = "";
+            if (raceMode != lastLoggedMode) {
+                if (!raceMode.empty()) {
+                    printf("[ProStreetRPC] Current race mode: '%s'\n", raceMode.c_str());
+                } else {
+                    printf("[ProStreetRPC] Race mode cleared.\n");
+                }
+                lastLoggedMode = raceMode;
             }
 
             unsigned long long money = 0;
@@ -78,40 +112,53 @@ DWORD WINAPI RpcThread(LPVOID param) {
                 xp = *(unsigned long long*)xpAddr;
             }
 
+            // Update Large Image Hover Text
             if (hasMap) {
-                activity.GetAssets().SetLargeText(displayMap.c_str());
+                if (hasRaceMode) {
+                    activity.GetAssets().SetLargeText((displayMap + " - " + raceMode).c_str());
+                } else {
+                    activity.GetAssets().SetLargeText(displayMap.c_str());
+                }
             } else {
                 activity.GetAssets().SetLargeText(("ProStreetRPC v" + version + " by WeeXnes").c_str());
             }
 
-            if (hasMap || hasMoney || hasXp) {
+            // Build dynamic details cycle list
+            std::vector<std::string> detailsCycle;
+
+            if (hasMap) {
+                detailsCycle.push_back(displayMap);
+            }
+            if (hasRaceMode) {
+                detailsCycle.push_back("Event: " + raceMode);
+            }
+            if (hasCar) {
+                detailsCycle.push_back("Car: " + displayCar);
+            }
+            if (hasXp && xp > 0) {
+                detailsCycle.push_back("Raceday: " + format_with_commas(xp) + " XP");
+            }
+
+            if (!detailsCycle.empty()) {
+                // Cycle every 4 seconds (8 loops of 500ms)
+                size_t cycleIndex = (loop_count / 8) % detailsCycle.size();
+                activity.SetDetails(detailsCycle[cycleIndex].c_str());
+
                 if (hasMoney) {
                     std::string formatted_balance = format_with_commas(money);
                     activity.SetState((formatted_balance + "$").c_str());
                 } else {
-                    activity.SetState("Money: N/A");
+                    activity.SetState("In Career");
                 }
-
-                std::string detailsText = "";
-                if (hasMap && hasXp) {
-                    int cycle = (loop_count / 10) % 2;
-                    if (cycle == 0) {
-                        detailsText = displayMap;
-                    } else {
-                        detailsText = "Raceday: " + format_with_commas(xp) + " XP";
-                    }
-                } else if (hasMap) {
-                    detailsText = displayMap;
-                } else if (hasXp) {
-                    detailsText = "Raceday: " + format_with_commas(xp) + " XP";
-                } else {
-                    detailsText = "Navigating";
-                }
-                activity.SetDetails(detailsText.c_str());
-
             } else {
-                activity.SetState("In Menus");
-                activity.SetDetails("Navigating");
+                if (hasMoney) {
+                    std::string formatted_balance = format_with_commas(money);
+                    activity.SetState((formatted_balance + "$").c_str());
+                    activity.SetDetails("In Menus");
+                } else {
+                    activity.SetState("In Menus");
+                    activity.SetDetails("Navigating");
+                }
             }
 
             if (discordCore) {
@@ -130,3 +177,4 @@ DWORD WINAPI RpcThread(LPVOID param) {
 
     return 0;
 }
+
