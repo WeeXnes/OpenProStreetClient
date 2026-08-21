@@ -44,6 +44,7 @@ if(EXISTS "${THIRDPARTY_SDK_DIR}")
     # For MinGW, we can link directly to the 32-bit dll.lib (import library)
     target_link_libraries(ProStreetRPC PRIVATE
         "${THIRDPARTY_SDK_DIR}/lib/x86/discord_game_sdk.dll.lib"
+        d3d9
     )
 else()
     # Traditional vcpkg setup for Windows builds

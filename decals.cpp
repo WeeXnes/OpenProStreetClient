@@ -4,6 +4,7 @@
 #include <string>
 #include <algorithm>
 #include <cctype>
+#include <d3d9.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_STDIO
@@ -14,7 +15,6 @@ namespace Decals
     static uintptr_t g_baseModule = 0;
     static std::vector<CustomDecal> g_customDecals;
     static void* g_origFindTexture = nullptr;
-    static void* g_origGetCategoryData = nullptr;
 
     #pragma pack(push, 1)
     struct EATexture
@@ -24,7 +24,7 @@ namespace Decals
         uint32_t unk08;          // 0x08
         uint32_t hash;           // 0x0C
         uint32_t className;      // 0x10
-        void* pD3DTexture;       // 0x14 (IDirect3DTexture9*)
+        IDirect3DTexture9* pD3DTexture; // 0x14
         uint16_t width;          // 0x18
         uint16_t height;         // 0x1A
         uint8_t mipLevels;       // 0x1C
@@ -35,8 +35,6 @@ namespace Decals
     #pragma pack(pop)
 
     static std::vector<EATexture> g_eaTextures;
-    static std::vector<uint32_t> g_expandedHashes;
-    static bool g_injectedIntoCategory = false;
 
     // Standard EA BinHash implementation (used across all NFS games for texture & car identifiers)
     static uint32_t bStringHash(const char* str)
@@ -124,7 +122,7 @@ namespace Decals
 
                     stbi_image_free(pixels);
 
-                    // Build mock eTexture container
+                    // Build EATexture container
                     EATexture eaTex;
                     memset(&eaTex, 0, sizeof(eaTex));
                     eaTex.hash = decal.hash;
@@ -149,7 +147,6 @@ namespace Decals
     {
         g_customDecals.clear();
         g_eaTextures.clear();
-        g_injectedIntoCategory = false;
 
         // Create scripts/decals directory if it doesn't exist
         CreateDirectoryA("scripts", NULL);
@@ -167,56 +164,66 @@ namespace Decals
         return g_customDecals;
     }
 
+    static IDirect3DDevice9* GetD3D9Device()
+    {
+        if (!g_baseModule) return nullptr;
+        uintptr_t pDevBase = g_baseModule + 0x6CE7E4; // 0xACE7E4
+        if (IsBadReadPtr((void*)pDevBase, sizeof(uintptr_t)) == 0) {
+            uintptr_t devPtr = *(uintptr_t*)pDevBase;
+            if (devPtr != 0 && !IsBadReadPtr((void*)devPtr, sizeof(uintptr_t))) {
+                return (IDirect3DDevice9*)devPtr;
+            }
+        }
+        return nullptr;
+    }
+
+    static void EnsureD3DTextureCreated(size_t index)
+    {
+        if (index >= g_customDecals.size() || index >= g_eaTextures.size()) return;
+        if (g_eaTextures[index].pD3DTexture != nullptr) return;
+
+        IDirect3DDevice9* pDev = GetD3D9Device();
+        if (!pDev) return;
+
+        CustomDecal& decal = g_customDecals[index];
+        IDirect3DTexture9* pTex = nullptr;
+
+        HRESULT hr = pDev->CreateTexture(
+            (UINT)decal.width,
+            (UINT)decal.height,
+            1,
+            0,
+            D3DFMT_A8R8G8B8,
+            D3DPOOL_MANAGED,
+            &pTex,
+            NULL
+        );
+
+        if (SUCCEEDED(hr) && pTex) {
+            D3DLOCKED_RECT rect;
+            if (SUCCEEDED(pTex->LockRect(0, &rect, NULL, 0))) {
+                uint8_t* pDest = (uint8_t*)rect.pBits;
+                for (int y = 0; y < decal.height; ++y) {
+                    memcpy(pDest + (y * rect.Pitch), &decal.argbPixels[y * decal.width], decal.width * 4);
+                }
+                pTex->UnlockRect(0);
+            }
+            g_eaTextures[index].pD3DTexture = pTex;
+            decal.d3dTexture = pTex;
+            printf("[ProStreetRPC] D3D9 Texture generated for decal '%s' (0x%08X)\n", decal.displayName.c_str(), decal.hash);
+        }
+    }
+
     static void* __attribute__((thiscall)) TexturePack_FindTexture_Hook(void* thisPtr, uint32_t hash)
     {
         for (size_t i = 0; i < g_customDecals.size(); ++i) {
             if (g_customDecals[i].hash == hash && i < g_eaTextures.size()) {
+                EnsureD3DTextureCreated(i);
                 return (void*)&g_eaTextures[i];
             }
         }
 
         return reinterpret_cast<void*(__attribute__((thiscall))*)(void*, uint32_t)>(g_origFindTexture)(thisPtr, hash);
-    }
-
-    static void* __attribute__((cdecl)) GetCategoryVinylData_Hook(uint32_t categoryKey)
-    {
-        void* res = reinterpret_cast<void*(__attribute__((cdecl))*)(uint32_t)>(g_origGetCategoryData)(categoryKey);
-        
-        // Category 4 = Flags (Flaggen), Category 0 = Aftermarket/Sponsors
-        if (res && (categoryKey == 4 || categoryKey == 0) && !g_customDecals.empty()) {
-            uintptr_t catPtr = (uintptr_t)res;
-            uint32_t* origArray = *(uint32_t**)catPtr;
-            uint32_t origCount = *(uint32_t*)(catPtr + 0x04);
-
-            if (origArray && origCount > 0 && origCount < 500) {
-                // Check if already injected
-                bool alreadyInjected = false;
-                for (uint32_t i = 0; i < origCount; ++i) {
-                    if (origArray[i] == g_customDecals[0].hash) {
-                        alreadyInjected = true;
-                        break;
-                    }
-                }
-
-                if (!alreadyInjected) {
-                    g_expandedHashes.clear();
-                    g_expandedHashes.reserve(origCount + g_customDecals.size());
-                    for (uint32_t i = 0; i < origCount; ++i) {
-                        g_expandedHashes.push_back(origArray[i]);
-                    }
-                    for (const auto& d : g_customDecals) {
-                        g_expandedHashes.push_back(d.hash);
-                    }
-
-                    *(uint32_t**)catPtr = g_expandedHashes.data();
-                    *(uint32_t*)(catPtr + 0x04) = (uint32_t)g_expandedHashes.size();
-                    printf("[ProStreetRPC] Injected %u custom decal(s) into category %u (Total: %u)\n", 
-                           (unsigned)g_customDecals.size(), categoryKey, (unsigned)g_expandedHashes.size());
-                }
-            }
-        }
-
-        return res;
     }
 
     static bool InstallDetour(void* target, void* detour, void** original, size_t patchSize = 6)
@@ -260,14 +267,10 @@ namespace Decals
         printf("[ProStreetRPC] Initializing Custom PNG Decals Subsystem...\n");
         ReloadDecals();
 
+        // Hook TexturePack::FindTexture at 0x004614B0 (exact 6 bytes)
         uintptr_t loc_4614B0 = baseModule + 0x614B0;
         if (InstallDetour((void*)loc_4614B0, (void*)TexturePack_FindTexture_Hook, &g_origFindTexture, 6)) {
             printf("[ProStreetRPC] TexturePack::FindTexture hook installed at 0x%p\n", (void*)loc_4614B0);
-        }
-
-        uintptr_t loc_754E00 = baseModule + 0x354E00;
-        if (InstallDetour((void*)loc_754E00, (void*)GetCategoryVinylData_Hook, &g_origGetCategoryData, 6)) {
-            printf("[ProStreetRPC] Category Vinyl Populator hook installed at 0x%p\n", (void*)loc_754E00);
         }
     }
 }
