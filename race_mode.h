@@ -7,5 +7,6 @@
 
 // Reads and translates the current race / event mode from game memory
 std::string ReadRaceMode(uintptr_t baseModule);
+void ClearRaceModeCache();
 
 #endif // PROSTREETRPC_RACE_MODE_H

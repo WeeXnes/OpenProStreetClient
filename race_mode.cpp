@@ -44,6 +44,8 @@ static std::string TranslateRaceModeId(int8_t modeId) {
     }
 }
 
+static std::string g_lastKnownRaceMode = "";
+
 std::string ReadRaceMode(uintptr_t baseModule) {
     uintptr_t gRaceStatusBase = baseModule + 0x6B9D7C;
     if (IsBadReadPtr((void*)gRaceStatusBase, sizeof(uintptr_t)) == 0) {
@@ -54,11 +56,19 @@ std::string ReadRaceMode(uintptr_t baseModule) {
                 uintptr_t eventData = *(uintptr_t*)(raceObj + 0x04);
                 if (eventData != 0 && IsBadReadPtr((void*)(eventData + 0x23), 1) == 0) {
                     int8_t raceModeId = *(int8_t*)(eventData + 0x23);
-                    return TranslateRaceModeId(raceModeId);
+                    std::string mode = TranslateRaceModeId(raceModeId);
+                    if (!mode.empty()) {
+                        g_lastKnownRaceMode = mode;
+                        return mode;
+                    }
                 }
             }
         }
     }
 
-    return "";
+    return g_lastKnownRaceMode;
+}
+
+void ClearRaceModeCache() {
+    g_lastKnownRaceMode = "";
 }

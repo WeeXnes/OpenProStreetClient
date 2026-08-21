@@ -109,12 +109,20 @@ namespace RaceResults
         uint32_t rawEventHash = 0;
         if (IsBadReadPtr((void*)(gRaceStatus + 0x2D04), sizeof(uintptr_t)) == 0) {
             uintptr_t raceObj = *(uintptr_t*)(gRaceStatus + 0x2D04);
-            if (raceObj != 0 && IsBadReadPtr((void*)raceObj, 0x10) == 0) {
-                uintptr_t eventData = *(uintptr_t*)(raceObj + 0x04);
-                if (eventData != 0 && IsBadReadPtr((void*)eventData, 0x10) == 0) {
-                    rawEventHash = *(uint32_t*)(eventData + 0x00);
-                    if (rawEventHash == 0) {
-                        rawEventHash = *(uint32_t*)(eventData + 0x04);
+            if (raceObj != 0 && IsBadReadPtr((void*)raceObj, 0x20) == 0) {
+                for (int off = 0x04; off <= 0x18; off += 4) {
+                    uintptr_t dataPtr = *(uintptr_t*)(raceObj + off);
+                    if (dataPtr != 0 && IsBadReadPtr((void*)dataPtr, 0x24) == 0) {
+                        uint32_t h = *(uint32_t*)(dataPtr + 0x00);
+                        if (h > 0x1000) {
+                            rawEventHash = h;
+                            break;
+                        }
+                        h = *(uint32_t*)(dataPtr + 0x04);
+                        if (h > 0x1000) {
+                            rawEventHash = h;
+                            break;
+                        }
                     }
                 }
             }
@@ -159,7 +167,7 @@ namespace RaceResults
                 case 3: raceMode = "Drift"; break;
                 case 4: raceMode = "Speed Challenge"; break;
                 case 2: raceMode = "Grip"; break;
-                default: raceMode = "Race"; break;
+                default: raceMode = "Time Attack"; break;
             }
         }
 
@@ -168,7 +176,7 @@ namespace RaceResults
 
         bool isDrag = (screenId == 5 || raceMode.find("Drag") != std::string::npos || raceMode.find("Wheelie") != std::string::npos);
         bool isDrift = (screenId == 3 || raceMode.find("Drift") != std::string::npos);
-        bool isSpeed = (screenId == 4 || raceMode.find("Speed") != std::string::npos || raceMode.find("Sector") != std::string::npos);
+        bool isSingleRun = (isDrag || raceMode.find("Speed") != std::string::npos || raceMode.find("Sector") != std::string::npos || raceMode.find("Time Attack") != std::string::npos || raceMode.find("Top Speed") != std::string::npos);
 
         // 3. Timing and Lap Extraction
         std::vector<float> lapTimes;
@@ -186,9 +194,14 @@ namespace RaceResults
             finishTimeRecorded = *(float*)(playerRacer + 0x474);
         }
 
-        float elapsedRaceTime = 0.0f;
-        if (IsBadReadPtr((void*)(gRaceStatus + 0x2CE4), sizeof(float)) == 0) {
-            elapsedRaceTime = *(float*)(gRaceStatus + 0x2CE4);
+        float finishDeltaRecorded = 0.0f;
+        if (IsBadReadPtr((void*)(playerRacer + 0x458), sizeof(float)) == 0) {
+            finishDeltaRecorded = *(float*)(playerRacer + 0x458);
+        }
+
+        float lap1Recorded = 0.0f;
+        if (IsBadReadPtr((void*)(playerRacer + 0x8C), sizeof(float)) == 0) {
+            lap1Recorded = *(float*)(playerRacer + 0x8C);
         }
 
         if (isDrag) {
@@ -212,25 +225,29 @@ namespace RaceResults
                 heatTimes.push_back(finishTimeRecorded);
                 bestLap = finishTimeRecorded;
             }
+            if (heatTimes.empty() && finishDeltaRecorded > 0.1f && finishDeltaRecorded < 300.0f) {
+                heatTimes.push_back(finishDeltaRecorded);
+                bestLap = finishDeltaRecorded;
+            }
             totalTime = bestLap;
-        } else if (isSpeed) {
-            // Speed Challenge / Top Speed / Sector Shootout
-            if (bestLapRecorded > 0.1f && bestLapRecorded < 36000.0f) {
+        } else if (isSingleRun) {
+            // Speed Challenge / Time Attack / Sector Shootout (Single-run / Single-lap point-to-point)
+            if (lap1Recorded > 0.1f && lap1Recorded < 36000.0f) {
+                bestLap = lap1Recorded;
+            } else if (bestLapRecorded > 0.1f && bestLapRecorded < 36000.0f) {
                 bestLap = bestLapRecorded;
             } else if (finishTimeRecorded > 0.1f && finishTimeRecorded < 36000.0f) {
                 bestLap = finishTimeRecorded;
-            } else if (IsBadReadPtr((void*)(playerRacer + 0x8C), sizeof(float)) == 0) {
-                float l1 = *(float*)(playerRacer + 0x8C);
-                if (l1 > 0.1f && l1 < 36000.0f) bestLap = l1;
+            } else if (finishDeltaRecorded > 0.1f && finishDeltaRecorded < 36000.0f) {
+                bestLap = finishDeltaRecorded;
             }
 
-            if (bestLap <= 0.0f && elapsedRaceTime > 0.1f && elapsedRaceTime < 36000.0f) {
-                bestLap = elapsedRaceTime;
+            if (bestLap > 0.1f) {
+                lapTimes.push_back(bestLap);
             }
-
             totalTime = bestLap;
         } else {
-            // Grip / Circuit: read laps
+            // Grip / Circuit: read multiple laps
             for (int off = 0x8C; off <= 0xCC; off += 4) {
                 if (IsBadReadPtr((void*)(playerRacer + off), sizeof(float)) == 0) {
                     float lap = *(float*)(playerRacer + off);
@@ -247,7 +264,7 @@ namespace RaceResults
                 bestLap = bestLapRecorded;
             }
             if (totalTime <= 0.0f) {
-                totalTime = (finishTimeRecorded > 0.1f) ? finishTimeRecorded : (bestLap > 0.1f ? bestLap : elapsedRaceTime);
+                totalTime = (finishTimeRecorded > 0.1f) ? finishTimeRecorded : ((bestLap > 0.1f) ? bestLap : finishDeltaRecorded);
             }
             if (bestLap <= 0.0f) {
                 bestLap = totalTime;
@@ -262,9 +279,7 @@ namespace RaceResults
             if (isDrift) {
                 score = *(float*)(pVehicle + 0x6C);
             }
-            if (isSpeed || isDrag) {
-                topSpeed = *(float*)(pVehicle + 0x70);
-            }
+            topSpeed = *(float*)(pVehicle + 0x70);
         }
 
         // Check fallback top speed in RacerInfo
@@ -353,9 +368,9 @@ namespace RaceResults
             screenId = *(uint32_t*)((uintptr_t)thisPtr + 4);
         }
 
-        reinterpret_cast<void(__attribute__((thiscall))*)(void*)>(g_origSinglePlayerHandleScreenConstructed)(thisPtr);
-
         ProcessPostRaceResults(g_baseModule, screenId);
+
+        reinterpret_cast<void(__attribute__((thiscall))*)(void*)>(g_origSinglePlayerHandleScreenConstructed)(thisPtr);
     }
 
     static void __attribute__((thiscall)) Online_HandleScreenConstructed_Hook(void* thisPtr)
@@ -365,9 +380,9 @@ namespace RaceResults
             screenId = *(uint32_t*)((uintptr_t)thisPtr + 4);
         }
 
-        reinterpret_cast<void(__attribute__((thiscall))*)(void*)>(g_origOnlineHandleScreenConstructed)(thisPtr);
-
         ProcessPostRaceResults(g_baseModule, screenId);
+
+        reinterpret_cast<void(__attribute__((thiscall))*)(void*)>(g_origOnlineHandleScreenConstructed)(thisPtr);
     }
 
     static bool InstallDetour(void* target, void* detour, void** original, size_t patchSize = 7)
