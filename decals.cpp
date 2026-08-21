@@ -13,6 +13,27 @@ namespace Decals
 {
     static uintptr_t g_baseModule = 0;
     static std::vector<CustomDecal> g_customDecals;
+    static void* g_origFindTexture = nullptr;
+
+    #pragma pack(push, 1)
+    struct EATexture
+    {
+        void* vtable;            // 0x00
+        uint32_t unk04;          // 0x04
+        uint32_t unk08;          // 0x08
+        uint32_t hash;           // 0x0C
+        uint32_t className;      // 0x10
+        void* pD3DTexture;       // 0x14 (IDirect3DTexture9*)
+        uint16_t width;          // 0x18
+        uint16_t height;         // 0x1A
+        uint8_t mipLevels;       // 0x1C
+        uint8_t format;          // 0x1D
+        uint16_t unk1E;          // 0x1E
+        uint32_t unk20;          // 0x20
+    };
+    #pragma pack(pop)
+
+    static std::vector<EATexture> g_eaTextures;
 
     // Standard EA BinHash implementation (used across all NFS games for texture & car identifiers)
     static uint32_t bStringHash(const char* str)
@@ -99,6 +120,18 @@ namespace Decals
                     }
 
                     stbi_image_free(pixels);
+
+                    // Build mock eTexture container
+                    EATexture eaTex;
+                    memset(&eaTex, 0, sizeof(eaTex));
+                    eaTex.hash = decal.hash;
+                    eaTex.width = (uint16_t)width;
+                    eaTex.height = (uint16_t)height;
+                    eaTex.mipLevels = 1;
+                    eaTex.format = 21; // D3DFMT_A8R8G8B8
+                    eaTex.pD3DTexture = nullptr;
+                    g_eaTextures.push_back(eaTex);
+
                     g_customDecals.push_back(decal);
 
                     printf("[ProStreetRPC] Custom Decal Loaded: '%s' (%dx%d, Hash: 0x%08X)\n", decal.displayName.c_str(), width, height, decal.hash);
@@ -112,6 +145,7 @@ namespace Decals
     void ReloadDecals()
     {
         g_customDecals.clear();
+        g_eaTextures.clear();
 
         // Create scripts/decals directory if it doesn't exist
         CreateDirectoryA("scripts", NULL);
@@ -129,6 +163,50 @@ namespace Decals
         return g_customDecals;
     }
 
+    static void* __attribute__((thiscall)) TexturePack_FindTexture_Hook(void* thisPtr, uint32_t hash)
+    {
+        for (size_t i = 0; i < g_customDecals.size(); ++i) {
+            if (g_customDecals[i].hash == hash && i < g_eaTextures.size()) {
+                return (void*)&g_eaTextures[i];
+            }
+        }
+
+        return reinterpret_cast<void*(__attribute__((thiscall))*)(void*, uint32_t)>(g_origFindTexture)(thisPtr, hash);
+    }
+
+    static bool InstallDetour(void* target, void* detour, void** original, size_t patchSize = 7)
+    {
+        if (!target || IsBadReadPtr(target, patchSize)) return false;
+
+        DWORD oldProtect = 0;
+        if (!VirtualProtect(target, patchSize, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
+
+        BYTE* trampoline = (BYTE*)VirtualAlloc(NULL, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+        if (!trampoline) {
+            VirtualProtect(target, patchSize, oldProtect, &oldProtect);
+            return false;
+        }
+
+        memcpy(trampoline, target, patchSize);
+
+        trampoline[patchSize] = 0xE9;
+        uintptr_t jmpBackOffset = ((uintptr_t)target + patchSize) - ((uintptr_t)trampoline + patchSize + 5);
+        memcpy(&trampoline[patchSize + 1], &jmpBackOffset, 4);
+
+        if (original) {
+            *original = (void*)trampoline;
+        }
+
+        std::vector<BYTE> jmpBuf(patchSize, 0x90);
+        jmpBuf[0] = 0xE9;
+        uintptr_t detourOffset = (uintptr_t)detour - ((uintptr_t)target + 5);
+        memcpy(&jmpBuf[1], &detourOffset, 4);
+        memcpy(target, jmpBuf.data(), patchSize);
+
+        VirtualProtect(target, patchSize, oldProtect, &oldProtect);
+        return true;
+    }
+
     void Init(uintptr_t baseModule)
     {
         if (!baseModule) return;
@@ -136,5 +214,10 @@ namespace Decals
 
         printf("[ProStreetRPC] Initializing Custom PNG Decals Subsystem...\n");
         ReloadDecals();
+
+        uintptr_t loc_4614B0 = baseModule + 0x614B0;
+        if (InstallDetour((void*)loc_4614B0, (void*)TexturePack_FindTexture_Hook, &g_origFindTexture, 7)) {
+            printf("[ProStreetRPC] TexturePack::FindTexture hook installed at 0x%p\n", (void*)loc_4614B0);
+        }
     }
 }

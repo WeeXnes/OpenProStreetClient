@@ -153,6 +153,7 @@ static const std::unordered_map<std::string, std::string> CAR_TRANSLATION_TABLE 
     {"CARRERAGT", "Porsche Carrera GT"},
     {"PORSCHE911", "Porsche 911"},
     {"911", "Porsche 911"},
+    {"PORSCHE", "Porsche 911 GT2"},
 
     // Shelby
     {"GT500", "Shelby GT500"},
@@ -206,7 +207,7 @@ static std::string NormalizeCarKey(const std::string& rawKey) {
         return it->first;
     }
 
-    // 2. Prefix split before mode suffix (e.g. "GTR_GRIP", "RX7_DRIFT", "911GT2_SPEED")
+    // 2. Prefix split before mode suffix (e.g. "911GT2_SPEED", "GTR_GRIP", "RX7_DRIFT")
     size_t underPos = upper.find('_');
     if (underPos != std::string::npos) {
         std::string prefix = upper.substr(0, underPos);
@@ -272,48 +273,39 @@ static std::string CheckDirectOrDerefCarString(uintptr_t ptr) {
     return "";
 }
 
-std::string ReadRawCarIdentifier(uintptr_t baseModule) {
-    // 1. Check LocalPlayer singleton (0xBFB400 -> baseModule + 0x7FB400)
-    uintptr_t activePlayerBase = baseModule + 0x7FB400;
-    if (IsBadReadPtr((void*)activePlayerBase, sizeof(uintptr_t)) == 0) {
-        uintptr_t localPlayer = *(uintptr_t*)activePlayerBase;
-        if (localPlayer != 0 && IsBadReadPtr((void*)localPlayer, 0x60) == 0) {
-            uintptr_t pVehicle = *(uintptr_t*)(localPlayer + 0x28);
-            if (pVehicle != 0 && IsBadReadPtr((void*)pVehicle, 0x100) == 0) {
-                // Scan pVehicle fields
-                for (int off = 0; off <= 0x80; off += 4) {
-                    std::string car = CheckDirectOrDerefCarString(pVehicle + off);
-                    if (!car.empty()) {
-                        g_lastKnownValidCarKey = car;
-                        return car;
-                    }
-                }
+static std::string ExtractCarFromPVehicle(uintptr_t pVehicle) {
+    if (!pVehicle || IsBadReadPtr((void*)pVehicle, 0x100)) {
+        return "";
+    }
 
-                uintptr_t cust = *(uintptr_t*)(pVehicle + 0x04);
-                if (cust != 0 && IsBadReadPtr((void*)cust, 0x40) == 0) {
-                    for (int off = 0; off <= 0x30; off += 4) {
-                        std::string car = CheckDirectOrDerefCarString(cust + off);
-                        if (!car.empty()) {
-                            g_lastKnownValidCarKey = car;
-                            return car;
-                        }
-                    }
-                    uintptr_t rideInfo = *(uintptr_t*)cust;
-                    if (rideInfo != 0 && IsBadReadPtr((void*)rideInfo, 0x40) == 0) {
-                        for (int off = 0; off <= 0x30; off += 4) {
-                            std::string car = CheckDirectOrDerefCarString(rideInfo + off);
-                            if (!car.empty()) {
-                                g_lastKnownValidCarKey = car;
-                                return car;
-                            }
-                        }
-                    }
-                }
+    // Scan pVehicle custom pointer & rideInfo
+    uintptr_t cust = *(uintptr_t*)(pVehicle + 0x04);
+    if (cust != 0 && !IsBadReadPtr((void*)cust, 0x40)) {
+        for (int off = 0; off <= 0x30; off += 4) {
+            std::string car = CheckDirectOrDerefCarString(cust + off);
+            if (!car.empty()) return car;
+        }
+
+        uintptr_t rideInfo = *(uintptr_t*)cust;
+        if (rideInfo != 0 && !IsBadReadPtr((void*)rideInfo, 0x40)) {
+            for (int off = 0; off <= 0x30; off += 4) {
+                std::string car = CheckDirectOrDerefCarString(rideInfo + off);
+                if (!car.empty()) return car;
             }
         }
     }
 
-    // 2. Check GRaceStatus racer 0..7 (active human player)
+    // Scan pVehicle fields
+    for (int off = 0; off <= 0x80; off += 4) {
+        std::string car = CheckDirectOrDerefCarString(pVehicle + off);
+        if (!car.empty()) return car;
+    }
+
+    return "";
+}
+
+std::string ReadRawCarIdentifier(uintptr_t baseModule) {
+    // 1. Check GRaceStatus racer 0..7 (active human player in race & post-race)
     uintptr_t gRaceStatusBase = baseModule + 0x6B9D7C;
     if (IsBadReadPtr((void*)gRaceStatusBase, sizeof(uintptr_t)) == 0) {
         uintptr_t gRaceStatus = *(uintptr_t*)gRaceStatusBase;
@@ -325,33 +317,11 @@ std::string ReadRawCarIdentifier(uintptr_t baseModule) {
                 uint32_t flags = *(uint32_t*)(racer + 0x68);
                 if (flags & 0x02) { // Local human player
                     uintptr_t pVehicle = *(uintptr_t*)(racer + 0x0C);
-                    if (pVehicle != 0 && IsBadReadPtr((void*)pVehicle, 0x100) == 0) {
-                        for (int off = 0; off <= 0x80; off += 4) {
-                            std::string car = CheckDirectOrDerefCarString(pVehicle + off);
-                            if (!car.empty()) {
-                                g_lastKnownValidCarKey = car;
-                                return car;
-                            }
-                        }
-                        uintptr_t cust = *(uintptr_t*)(pVehicle + 0x04);
-                        if (cust != 0 && IsBadReadPtr((void*)cust, 0x40) == 0) {
-                            for (int off = 0; off <= 0x30; off += 4) {
-                                std::string car = CheckDirectOrDerefCarString(cust + off);
-                                if (!car.empty()) {
-                                    g_lastKnownValidCarKey = car;
-                                    return car;
-                                }
-                            }
-                            uintptr_t rideInfo = *(uintptr_t*)cust;
-                            if (rideInfo != 0 && IsBadReadPtr((void*)rideInfo, 0x40) == 0) {
-                                for (int off = 0; off <= 0x30; off += 4) {
-                                    std::string car = CheckDirectOrDerefCarString(rideInfo + off);
-                                    if (!car.empty()) {
-                                        g_lastKnownValidCarKey = car;
-                                        return car;
-                                    }
-                                }
-                            }
+                    if (pVehicle) {
+                        std::string car = ExtractCarFromPVehicle(pVehicle);
+                        if (!car.empty()) {
+                            g_lastKnownValidCarKey = car;
+                            return car;
                         }
                     }
 
@@ -368,32 +338,23 @@ std::string ReadRawCarIdentifier(uintptr_t baseModule) {
         }
     }
 
-    // 3. Check FEPlayerCarDB / Career Garage (0xAB2DCC -> baseModule + 0x6B2DCC)
-    uintptr_t playerDbBase = baseModule + 0x6B2DCC;
-    if (IsBadReadPtr((void*)playerDbBase, sizeof(uintptr_t)) == 0) {
-        uintptr_t playerDb = *(uintptr_t*)playerDbBase;
-        if (playerDb != 0 && IsBadReadPtr((void*)playerDb, 0x200) == 0) {
-            uint32_t numCars = *(uint32_t*)(playerDb + 0x154);
-            uintptr_t carArray = *(uintptr_t*)(playerDb + 0x15C);
-            if (numCars > 0 && numCars < 200 && carArray != 0 && IsBadReadPtr((void*)carArray, numCars * 12) == 0) {
-                for (uint32_t i = 0; i < numCars; ++i) {
-                    uintptr_t carRec = carArray + (i * 12);
-                    std::string car = CheckDirectOrDerefCarString(carRec);
-                    if (!car.empty()) {
-                        g_lastKnownValidCarKey = car;
-                        return car;
-                    }
-                    car = CheckDirectOrDerefCarString(carRec + 4);
-                    if (!car.empty()) {
-                        g_lastKnownValidCarKey = car;
-                        return car;
-                    }
+    // 2. Check LocalPlayer singleton (0xBFB400 -> baseModule + 0x7FB400)
+    uintptr_t activePlayerBase = baseModule + 0x7FB400;
+    if (IsBadReadPtr((void*)activePlayerBase, sizeof(uintptr_t)) == 0) {
+        uintptr_t localPlayer = *(uintptr_t*)activePlayerBase;
+        if (localPlayer != 0 && IsBadReadPtr((void*)localPlayer, 0x60) == 0) {
+            uintptr_t pVehicle = *(uintptr_t*)(localPlayer + 0x28);
+            if (pVehicle) {
+                std::string car = ExtractCarFromPVehicle(pVehicle);
+                if (!car.empty()) {
+                    g_lastKnownValidCarKey = car;
+                    return car;
                 }
             }
         }
     }
 
-    // 4. Check Raceday Matchup / Selected Car screen (FeEventMatchup at 0xAB2E04)
+    // 3. Check Raceday Matchup / Selected Car screen (FeEventMatchup at 0xAB2E04)
     uintptr_t feMatchupBase = baseModule + 0x6B2E04;
     if (IsBadReadPtr((void*)feMatchupBase, sizeof(uintptr_t)) == 0) {
         uintptr_t feMatchup = *(uintptr_t*)feMatchupBase;

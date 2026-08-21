@@ -15,7 +15,11 @@ namespace RaceResults
     static uintptr_t g_baseModule = 0;
     static void* g_origSinglePlayerHandleScreenConstructed = nullptr;
     static void* g_origOnlineHandleScreenConstructed = nullptr;
+    static void* g_origSetTimeBonus = nullptr;
+    static void* g_origSetPoints = nullptr;
 
+    static float g_lastRewardsTime = 0.0f;
+    static float g_lastRewardsPoints = 0.0f;
     static uint32_t g_lastFinishedEventId = 0;
     static time_t g_lastLogTimestamp = 0;
 
@@ -142,7 +146,7 @@ namespace RaceResults
         uintptr_t playerRacer = 0;
         for (uint32_t i = 0; i < numRacers && i < 8; ++i) {
             uintptr_t racer = gRaceStatus + 0x20 + (i * 0x594);
-            if (IsBadReadPtr((void*)racer, 0x70)) break;
+            if (IsBadReadPtr((void*)racer, 0x80)) break;
 
             uint32_t flags = *(uint32_t*)(racer + 0x68);
             if (flags & 0x02) { // Local human player
@@ -151,7 +155,7 @@ namespace RaceResults
             }
         }
 
-        if (!playerRacer && IsBadReadPtr((void*)(gRaceStatus + 0x20), 0x70) == 0) {
+        if (!playerRacer && IsBadReadPtr((void*)(gRaceStatus + 0x20), 0x80) == 0) {
             playerRacer = gRaceStatus + 0x20;
         }
 
@@ -176,7 +180,6 @@ namespace RaceResults
 
         bool isDrag = (screenId == 5 || raceMode.find("Drag") != std::string::npos || raceMode.find("Wheelie") != std::string::npos);
         bool isDrift = (screenId == 3 || raceMode.find("Drift") != std::string::npos);
-        bool isSingleRun = (isDrag || raceMode.find("Speed") != std::string::npos || raceMode.find("Sector") != std::string::npos || raceMode.find("Time Attack") != std::string::npos || raceMode.find("Top Speed") != std::string::npos);
 
         // 3. Timing and Lap Extraction
         std::vector<float> lapTimes;
@@ -204,8 +207,13 @@ namespace RaceResults
             lap1Recorded = *(float*)(playerRacer + 0x8C);
         }
 
-        if (isDrag) {
-            // Drag: read Heat 1, Heat 2, Heat 3
+        // Priority 1: Exact UI Rewards screen time (captured from SetTimeBonus)
+        if (g_lastRewardsTime > 0.1f && g_lastRewardsTime < 3600.0f) {
+            totalTime = g_lastRewardsTime;
+            bestLap = g_lastRewardsTime;
+            lapTimes.push_back(g_lastRewardsTime);
+        } else if (isDrag) {
+            // Drag Heats
             for (int off = 0x8C; off <= 0x94; off += 4) {
                 if (IsBadReadPtr((void*)(playerRacer + off), sizeof(float)) == 0) {
                     float heat = *(float*)(playerRacer + off);
@@ -225,29 +233,9 @@ namespace RaceResults
                 heatTimes.push_back(finishTimeRecorded);
                 bestLap = finishTimeRecorded;
             }
-            if (heatTimes.empty() && finishDeltaRecorded > 0.1f && finishDeltaRecorded < 300.0f) {
-                heatTimes.push_back(finishDeltaRecorded);
-                bestLap = finishDeltaRecorded;
-            }
-            totalTime = bestLap;
-        } else if (isSingleRun) {
-            // Speed Challenge / Time Attack / Sector Shootout (Single-run / Single-lap point-to-point)
-            if (lap1Recorded > 0.1f && lap1Recorded < 36000.0f) {
-                bestLap = lap1Recorded;
-            } else if (bestLapRecorded > 0.1f && bestLapRecorded < 36000.0f) {
-                bestLap = bestLapRecorded;
-            } else if (finishTimeRecorded > 0.1f && finishTimeRecorded < 36000.0f) {
-                bestLap = finishTimeRecorded;
-            } else if (finishDeltaRecorded > 0.1f && finishDeltaRecorded < 36000.0f) {
-                bestLap = finishDeltaRecorded;
-            }
-
-            if (bestLap > 0.1f) {
-                lapTimes.push_back(bestLap);
-            }
             totalTime = bestLap;
         } else {
-            // Grip / Circuit: read multiple laps
+            // Read multi-laps or single run
             for (int off = 0x8C; off <= 0xCC; off += 4) {
                 if (IsBadReadPtr((void*)(playerRacer + off), sizeof(float)) == 0) {
                     float lap = *(float*)(playerRacer + off);
@@ -260,23 +248,25 @@ namespace RaceResults
                     }
                 }
             }
-            if (bestLap <= 0.0f && bestLapRecorded > 0.1f && bestLapRecorded < 36000.0f) {
-                bestLap = bestLapRecorded;
-            }
+
             if (totalTime <= 0.0f) {
-                totalTime = (finishTimeRecorded > 0.1f) ? finishTimeRecorded : ((bestLap > 0.1f) ? bestLap : finishDeltaRecorded);
+                if (lap1Recorded > 0.1f && lap1Recorded < 36000.0f) totalTime = lap1Recorded;
+                else if (bestLapRecorded > 0.1f && bestLapRecorded < 36000.0f) totalTime = bestLapRecorded;
+                else if (finishTimeRecorded > 0.1f && finishTimeRecorded < 36000.0f) totalTime = finishTimeRecorded;
+                else if (finishDeltaRecorded > 0.1f && finishDeltaRecorded < 36000.0f) totalTime = finishDeltaRecorded;
             }
+
             if (bestLap <= 0.0f) {
-                bestLap = totalTime;
+                bestLap = (bestLapRecorded > 0.1f) ? bestLapRecorded : totalTime;
             }
         }
 
         // 4. Score / Top Speed
-        float score = 0.0f;
+        float score = (g_lastRewardsPoints > 0.0f) ? g_lastRewardsPoints : 0.0f;
         float topSpeed = 0.0f;
         uintptr_t pVehicle = *(uintptr_t*)(playerRacer + 0x0C);
         if (pVehicle != 0 && IsBadReadPtr((void*)pVehicle, 0x80) == 0) {
-            if (isDrift) {
+            if (isDrift && score <= 0.0f) {
                 score = *(float*)(pVehicle + 0x6C);
             }
             topSpeed = *(float*)(pVehicle + 0x70);
@@ -361,6 +351,33 @@ namespace RaceResults
         SaveRaceResultToJson(res);
     }
 
+    static void __attribute__((thiscall)) SetTimeBonus_Hook(void* thisPtr, void* dataPtr)
+    {
+        if (dataPtr && !IsBadReadPtr(dataPtr, 32)) {
+            float* fData = (float*)dataPtr;
+            for (int i = 0; i < 8; ++i) {
+                float val = fData[i];
+                if (val > 1.0f && val < 3600.0f) {
+                    g_lastRewardsTime = val;
+                }
+            }
+        }
+
+        reinterpret_cast<void(__attribute__((thiscall))*)(void*, void*)>(g_origSetTimeBonus)(thisPtr, dataPtr);
+    }
+
+    static void __attribute__((thiscall)) SetPoints_Hook(void* thisPtr, void* dataPtr)
+    {
+        if (dataPtr && !IsBadReadPtr(dataPtr, 16)) {
+            uint32_t* pData = (uint32_t*)dataPtr;
+            if (pData[0] > 0 && pData[0] < 1000000) {
+                g_lastRewardsPoints = (float)pData[0];
+            }
+        }
+
+        reinterpret_cast<void(__attribute__((thiscall))*)(void*, void*)>(g_origSetPoints)(thisPtr, dataPtr);
+    }
+
     static void __attribute__((thiscall)) SinglePlayer_HandleScreenConstructed_Hook(void* thisPtr)
     {
         uint32_t screenId = 0;
@@ -430,13 +447,23 @@ namespace RaceResults
 
         uintptr_t loc_5A7750 = baseModule + 0x1A7750;
         uintptr_t loc_5FA460 = baseModule + 0x1FA460;
+        uintptr_t loc_614340 = baseModule + 0x214340;
+        uintptr_t loc_614360 = baseModule + 0x214360;
 
         if (InstallDetour((void*)loc_5A7750, (void*)SinglePlayer_HandleScreenConstructed_Hook, &g_origSinglePlayerHandleScreenConstructed, 7)) {
-            printf("[ProStreetRPC] SP PostRaceStateManager hook installed at 0x%p (orig trampoline: 0x%p)\n", (void*)loc_5A7750, g_origSinglePlayerHandleScreenConstructed);
+            printf("[ProStreetRPC] SP PostRaceStateManager hook installed at 0x%p\n", (void*)loc_5A7750);
         }
 
         if (InstallDetour((void*)loc_5FA460, (void*)Online_HandleScreenConstructed_Hook, &g_origOnlineHandleScreenConstructed, 7)) {
-            printf("[ProStreetRPC] Online PostRaceStateManager hook installed at 0x%p (orig trampoline: 0x%p)\n", (void*)loc_5FA460, g_origOnlineHandleScreenConstructed);
+            printf("[ProStreetRPC] Online PostRaceStateManager hook installed at 0x%p\n", (void*)loc_5FA460);
+        }
+
+        if (InstallDetour((void*)loc_614340, (void*)SetTimeBonus_Hook, &g_origSetTimeBonus, 7)) {
+            printf("[ProStreetRPC] SetTimeBonus hook installed at 0x%p\n", (void*)loc_614340);
+        }
+
+        if (InstallDetour((void*)loc_614360, (void*)SetPoints_Hook, &g_origSetPoints, 7)) {
+            printf("[ProStreetRPC] SetPoints hook installed at 0x%p\n", (void*)loc_614360);
         }
     }
 }
