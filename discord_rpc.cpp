@@ -32,9 +32,6 @@ DWORD WINAPI RpcThread(LPVOID param) {
         loop_count++;
 
         try {
-            // Track race lifecycle and log finish results / event ID
-            UpdateRaceResultsTracker(baseModule);
-
             // Read Money
             uintptr_t moneyAddr = 0;
             uintptr_t moneyBasePtr = baseModule + 0x6B0EA8;

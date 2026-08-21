@@ -47,9 +47,9 @@ fi
 echo "Creating ZIP bundle..."
 python3 -c "
 import zipfile, os
-version = '1.5'
-if os.path.exists('library.cpp'):
-    with open('library.cpp') as f:
+lib_file = os.path.join('${SCRIPT_DIR}', 'library.cpp')
+if os.path.exists(lib_file):
+    with open(lib_file) as f:
         for line in f:
             if 'const std::string version =' in line:
                 version = line.split('\"')[1]
