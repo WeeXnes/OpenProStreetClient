@@ -17,7 +17,7 @@ if(EXISTS "${THIRDPARTY_SDK_DIR}")
     
     # Compile the Discord Game SDK C++ wrapper files directly from source
     add_library(ProStreetRPC SHARED 
-        library.cpp utils.cpp map.cpp car.cpp race_mode.cpp race_results.cpp lanfix.cpp discord_rpc.cpp tweaks.cpp
+        library.cpp utils.cpp map.cpp car.cpp race_mode.cpp race_results.cpp lanfix.cpp discord_rpc.cpp tweaks.cpp decals.cpp
         ${DISCORD_SDK_SOURCES}
     )
     

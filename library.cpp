@@ -3,6 +3,7 @@
 #include "lanfix.h"
 #include "race_results.h"
 #include "tweaks.h"
+#include "decals.h"
 #include <cstdio>
 #include <discord.h>
 #include <string>
@@ -10,7 +11,7 @@
 
 discord::Core *discordCore = nullptr;
 
-const std::string version = "4.5";
+const std::string version = "5.0";
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
                       LPVOID lpReserved) {
@@ -32,6 +33,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
 
     LANFix::Init();
     Tweaks::Init(baseModule);
+    Decals::Init(baseModule);
     RaceResults::Init(baseModule);
 
     HANDLE hThread = CreateThread(NULL, 0, RpcThread, NULL, 0, NULL);
