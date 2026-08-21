@@ -305,7 +305,7 @@ static std::string ExtractCarFromPVehicle(uintptr_t pVehicle) {
 }
 
 std::string ReadRawCarIdentifier(uintptr_t baseModule) {
-    // 1. Check GRaceStatus racer 0..7 (active human player in race & post-race)
+    // 1. Check GRaceStatus racer 0..7 (active player vehicle in race & post-race)
     uintptr_t gRaceStatusBase = baseModule + 0x6B9D7C;
     if (IsBadReadPtr((void*)gRaceStatusBase, sizeof(uintptr_t)) == 0) {
         uintptr_t gRaceStatus = *(uintptr_t*)gRaceStatusBase;
@@ -314,24 +314,21 @@ std::string ReadRawCarIdentifier(uintptr_t baseModule) {
                 uintptr_t racer = gRaceStatus + 0x20 + (i * 0x594);
                 if (IsBadReadPtr((void*)racer, 0x80)) break;
 
-                uint32_t flags = *(uint32_t*)(racer + 0x68);
-                if (flags & 0x02) { // Local human player
-                    uintptr_t pVehicle = *(uintptr_t*)(racer + 0x0C);
-                    if (pVehicle) {
-                        std::string car = ExtractCarFromPVehicle(pVehicle);
-                        if (!car.empty()) {
-                            g_lastKnownValidCarKey = car;
-                            return car;
-                        }
+                uintptr_t pVehicle = *(uintptr_t*)(racer + 0x0C);
+                if (pVehicle) {
+                    std::string car = ExtractCarFromPVehicle(pVehicle);
+                    if (!car.empty()) {
+                        g_lastKnownValidCarKey = car;
+                        return car;
                     }
+                }
 
-                    // Check racer slots
-                    for (int off = 0x00; off <= 0x30; off += 4) {
-                        std::string car = CheckDirectOrDerefCarString(racer + off);
-                        if (!car.empty()) {
-                            g_lastKnownValidCarKey = car;
-                            return car;
-                        }
+                // Check racer direct slots
+                for (int off = 0x00; off <= 0x30; off += 4) {
+                    std::string car = CheckDirectOrDerefCarString(racer + off);
+                    if (!car.empty()) {
+                        g_lastKnownValidCarKey = car;
+                        return car;
                     }
                 }
             }
@@ -354,7 +351,20 @@ std::string ReadRawCarIdentifier(uintptr_t baseModule) {
         }
     }
 
-    // 3. Check Raceday Matchup / Selected Car screen (FeEventMatchup at 0xAB2E04)
+    // 3. Check GCar / Active Vehicle Object (baseModule + 0x6B9DB0)
+    uintptr_t gCarBase = baseModule + 0x6B9DB0;
+    if (IsBadReadPtr((void*)gCarBase, sizeof(uintptr_t)) == 0) {
+        uintptr_t gCar = *(uintptr_t*)gCarBase;
+        if (gCar != 0 && IsBadReadPtr((void*)gCar, 0x80) == 0) {
+            std::string car = ExtractCarFromPVehicle(gCar);
+            if (!car.empty()) {
+                g_lastKnownValidCarKey = car;
+                return car;
+            }
+        }
+    }
+
+    // 4. Check Raceday Matchup / Selected Car screen (FeEventMatchup at 0xAB2E04)
     uintptr_t feMatchupBase = baseModule + 0x6B2E04;
     if (IsBadReadPtr((void*)feMatchupBase, sizeof(uintptr_t)) == 0) {
         uintptr_t feMatchup = *(uintptr_t*)feMatchupBase;

@@ -15,6 +15,7 @@ namespace RaceResults
     static uintptr_t g_baseModule = 0;
     static void* g_origSinglePlayerHandleScreenConstructed = nullptr;
     static void* g_origOnlineHandleScreenConstructed = nullptr;
+    static void* g_origPopulateData = nullptr;
     static void* g_origSetTimeBonus = nullptr;
     static void* g_origSetPoints = nullptr;
 
@@ -137,25 +138,8 @@ namespace RaceResults
             return;
         }
 
-        uint32_t numRacers = 1;
-        if (IsBadReadPtr((void*)(gRaceStatus + 0x2CE0), sizeof(uint32_t)) == 0) {
-            numRacers = *(uint32_t*)(gRaceStatus + 0x2CE0);
-        }
-
-        // Locate local human player racer slot
         uintptr_t playerRacer = 0;
-        for (uint32_t i = 0; i < numRacers && i < 8; ++i) {
-            uintptr_t racer = gRaceStatus + 0x20 + (i * 0x594);
-            if (IsBadReadPtr((void*)racer, 0x80)) break;
-
-            uint32_t flags = *(uint32_t*)(racer + 0x68);
-            if (flags & 0x02) { // Local human player
-                playerRacer = racer;
-                break;
-            }
-        }
-
-        if (!playerRacer && IsBadReadPtr((void*)(gRaceStatus + 0x20), 0x80) == 0) {
+        if (IsBadReadPtr((void*)(gRaceStatus + 0x20), 0x80) == 0) {
             playerRacer = gRaceStatus + 0x20;
         }
 
@@ -207,7 +191,7 @@ namespace RaceResults
             lap1Recorded = *(float*)(playerRacer + 0x8C);
         }
 
-        // Priority 1: Exact UI Rewards screen time (captured from SetTimeBonus)
+        // Priority 1: Exact UI Rewards screen time (captured from SetTimeBonus / 0x5982F0)
         if (g_lastRewardsTime > 0.1f && g_lastRewardsTime < 3600.0f) {
             totalTime = g_lastRewardsTime;
             bestLap = g_lastRewardsTime;
@@ -351,6 +335,14 @@ namespace RaceResults
         SaveRaceResultToJson(res);
     }
 
+    static void __attribute__((thiscall)) FePostRaceRewards_PopulateData_Hook(void* thisPtr, void* pParam)
+    {
+        reinterpret_cast<void(__attribute__((thiscall))*)(void*, void*)>(g_origPopulateData)(thisPtr, pParam);
+
+        // After PopulateData finishes, SetTimeBonus & SetPoints have fully executed!
+        ProcessPostRaceResults(g_baseModule, 0);
+    }
+
     static void __attribute__((thiscall)) SetTimeBonus_Hook(void* thisPtr, void* dataPtr)
     {
         if (dataPtr && !IsBadReadPtr(dataPtr, 32)) {
@@ -385,7 +377,9 @@ namespace RaceResults
             screenId = *(uint32_t*)((uintptr_t)thisPtr + 4);
         }
 
-        ProcessPostRaceResults(g_baseModule, screenId);
+        if (screenId != 0) { // Screen 0 is handled via PopulateData hook
+            ProcessPostRaceResults(g_baseModule, screenId);
+        }
 
         reinterpret_cast<void(__attribute__((thiscall))*)(void*)>(g_origSinglePlayerHandleScreenConstructed)(thisPtr);
     }
@@ -415,10 +409,8 @@ namespace RaceResults
             return false;
         }
 
-        // Copy original bytes to trampoline
         memcpy(trampoline, target, patchSize);
 
-        // Write JMP back from trampoline to target + patchSize
         trampoline[patchSize] = 0xE9;
         uintptr_t jmpBackOffset = ((uintptr_t)target + patchSize) - ((uintptr_t)trampoline + patchSize + 5);
         memcpy(&trampoline[patchSize + 1], &jmpBackOffset, 4);
@@ -427,7 +419,6 @@ namespace RaceResults
             *original = (void*)trampoline;
         }
 
-        // Write JMP from target to detour
         std::vector<BYTE> jmpBuf(patchSize, 0x90);
         jmpBuf[0] = 0xE9;
         uintptr_t detourOffset = (uintptr_t)detour - ((uintptr_t)target + 5);
@@ -447,6 +438,7 @@ namespace RaceResults
 
         uintptr_t loc_5A7750 = baseModule + 0x1A7750;
         uintptr_t loc_5FA460 = baseModule + 0x1FA460;
+        uintptr_t loc_5982F0 = baseModule + 0x1982F0;
         uintptr_t loc_614340 = baseModule + 0x214340;
         uintptr_t loc_614360 = baseModule + 0x214360;
 
@@ -456,6 +448,10 @@ namespace RaceResults
 
         if (InstallDetour((void*)loc_5FA460, (void*)Online_HandleScreenConstructed_Hook, &g_origOnlineHandleScreenConstructed, 7)) {
             printf("[ProStreetRPC] Online PostRaceStateManager hook installed at 0x%p\n", (void*)loc_5FA460);
+        }
+
+        if (InstallDetour((void*)loc_5982F0, (void*)FePostRaceRewards_PopulateData_Hook, &g_origPopulateData, 7)) {
+            printf("[ProStreetRPC] FePostRaceRewards::PopulateData hook installed at 0x%p\n", (void*)loc_5982F0);
         }
 
         if (InstallDetour((void*)loc_614340, (void*)SetTimeBonus_Hook, &g_origSetTimeBonus, 7)) {
