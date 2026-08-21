@@ -28,12 +28,6 @@ namespace RaceResults
 {
     // Initializes the Post-Race State Manager trampoline hooks
     void Init(uintptr_t baseModule);
-
-    // Feeds live telemetry / context from the RPC loop
-    void UpdateLiveContext(const std::string& rawMap, const std::string& displayMap,
-                           const std::string& rawCar, const std::string& displayCar,
-                           const std::string& raceMode, uint32_t eventHash,
-                           float driftScore = 0.0f, float topSpeed = 0.0f);
 }
 
 #endif // PROSTREETRPC_RACE_RESULTS_H

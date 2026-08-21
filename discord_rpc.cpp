@@ -32,6 +32,19 @@ DWORD WINAPI RpcThread(LPVOID param) {
         loop_count++;
 
         try {
+            // Lazy / Safe Discord connection (retries every 5s if Discord wasn't open on boot)
+            if (!discordCore) {
+                static time_t lastAttempt = 0;
+                time_t now = time(nullptr);
+                if (now - lastAttempt >= 5) {
+                    lastAttempt = now;
+                    discord::Result res = discord::Core::Create(656565390411038731, DiscordCreateFlags_NoRequireDiscord, &discordCore);
+                    if (res == discord::Result::Ok) {
+                        printf("[ProStreetRPC] Discord core connected successfully.\n");
+                    }
+                }
+            }
+
             // Read Money
             uintptr_t moneyAddr = 0;
             uintptr_t moneyBasePtr = baseModule + 0x6B0EA8;
@@ -98,24 +111,6 @@ DWORD WINAPI RpcThread(LPVOID param) {
                 }
                 lastLoggedMode = raceMode;
             }
-
-            // Feed live context to RaceResults
-            uint32_t liveEventHash = 0;
-            uintptr_t gRaceStatusBase = baseModule + 0x6B9D7C;
-            if (IsBadReadPtr((void*)gRaceStatusBase, sizeof(uintptr_t)) == 0) {
-                uintptr_t gRaceStatus = *(uintptr_t*)gRaceStatusBase;
-                if (gRaceStatus != 0 && IsBadReadPtr((void*)(gRaceStatus + 0x2D04), sizeof(uintptr_t)) == 0) {
-                    uintptr_t raceObj = *(uintptr_t*)(gRaceStatus + 0x2D04);
-                    if (raceObj != 0 && IsBadReadPtr((void*)(raceObj + 0x04), sizeof(uintptr_t)) == 0) {
-                        uintptr_t eventData = *(uintptr_t*)(raceObj + 0x04);
-                        if (eventData != 0 && IsBadReadPtr((void*)eventData, 0x10) == 0) {
-                            liveEventHash = *(uint32_t*)(eventData + 0x00);
-                            if (liveEventHash == 0) liveEventHash = *(uint32_t*)(eventData + 0x04);
-                        }
-                    }
-                }
-            }
-            RaceResults::UpdateLiveContext(rawMap, displayMap, rawCar, displayCar, raceMode, liveEventHash);
 
             unsigned long long money = 0;
             unsigned long long xp = 0;
@@ -196,4 +191,3 @@ DWORD WINAPI RpcThread(LPVOID param) {
 
     return 0;
 }
-

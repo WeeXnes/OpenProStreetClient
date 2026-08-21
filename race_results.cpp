@@ -19,46 +19,6 @@ namespace RaceResults
     static uint32_t g_lastFinishedEventId = 0;
     static time_t g_lastLogTimestamp = 0;
 
-    struct LiveRaceContext {
-        std::string rawMap;
-        std::string displayMap;
-        std::string rawCar;
-        std::string displayCar;
-        std::string raceMode;
-        uint32_t eventHash = 0;
-        float driftScore = 0.0f;
-        float topSpeed = 0.0f;
-    };
-
-    static LiveRaceContext s_liveContext;
-
-    void UpdateLiveContext(const std::string& rawMap, const std::string& displayMap,
-                           const std::string& rawCar, const std::string& displayCar,
-                           const std::string& raceMode, uint32_t eventHash,
-                           float driftScore, float topSpeed)
-    {
-        if (!displayMap.empty()) {
-            s_liveContext.rawMap = rawMap;
-            s_liveContext.displayMap = displayMap;
-        }
-        if (!displayCar.empty()) {
-            s_liveContext.rawCar = rawCar;
-            s_liveContext.displayCar = displayCar;
-        }
-        if (!raceMode.empty()) {
-            s_liveContext.raceMode = raceMode;
-        }
-        if (eventHash != 0) {
-            s_liveContext.eventHash = eventHash;
-        }
-        if (driftScore > s_liveContext.driftScore) {
-            s_liveContext.driftScore = driftScore;
-        }
-        if (topSpeed > s_liveContext.topSpeed) {
-            s_liveContext.topSpeed = topSpeed;
-        }
-    }
-
     static std::string FormatSecondsToTime(float seconds) {
         if (seconds <= 0.0f || seconds > 36000.0f) {
             return "0:00.000";
@@ -130,7 +90,7 @@ namespace RaceResults
     static void ProcessPostRaceResults(uintptr_t baseModule, uint32_t screenId)
     {
         time_t now = time(nullptr);
-        // Throttle to avoid duplicate logs in rapid succession
+        // Throttle duplicate calls in rapid succession
         if (now - g_lastLogTimestamp < 3 && g_lastLogTimestamp != 0) {
             return;
         }
@@ -158,9 +118,6 @@ namespace RaceResults
                     }
                 }
             }
-        }
-        if (rawEventHash == 0) {
-            rawEventHash = s_liveContext.eventHash;
         }
 
         // Skip if duplicate event
@@ -192,20 +149,22 @@ namespace RaceResults
 
         if (!playerRacer) return;
 
-        // 2. Track & Mode & Car (with live context fallback)
+        // 2. Track & Mode & Car
         std::string rawMap = ReadRawMapIdentifier(baseModule);
-        if (rawMap.empty()) rawMap = s_liveContext.rawMap;
         std::string displayMap = TranslateMapIdentifier(rawMap);
-        if (displayMap.empty()) displayMap = s_liveContext.displayMap;
-
         std::string raceMode = ReadRaceMode(baseModule);
-        if (raceMode.empty()) raceMode = s_liveContext.raceMode;
-        if (raceMode.empty()) raceMode = "Race";
+        if (raceMode.empty()) {
+            switch (screenId) {
+                case 5: raceMode = "Drag"; break;
+                case 3: raceMode = "Drift"; break;
+                case 4: raceMode = "Speed Challenge"; break;
+                case 2: raceMode = "Grip"; break;
+                default: raceMode = "Race"; break;
+            }
+        }
 
         std::string rawCar = ReadRawCarIdentifier(baseModule);
-        if (rawCar.empty()) rawCar = s_liveContext.rawCar;
         std::string displayCar = TranslateCarIdentifier(rawCar);
-        if (displayCar.empty()) displayCar = s_liveContext.displayCar;
 
         bool isDrag = (screenId == 5 || raceMode.find("Drag") != std::string::npos || raceMode.find("Wheelie") != std::string::npos);
         bool isDrift = (screenId == 3 || raceMode.find("Drift") != std::string::npos);
@@ -279,17 +238,15 @@ namespace RaceResults
         }
 
         // 4. Score / Top Speed
-        float score = s_liveContext.driftScore;
-        float topSpeed = s_liveContext.topSpeed;
+        float score = 0.0f;
+        float topSpeed = 0.0f;
         uintptr_t pVehicle = *(uintptr_t*)(playerRacer + 0x0C);
         if (pVehicle != 0 && IsBadReadPtr((void*)pVehicle, 0x80) == 0) {
             if (isDrift) {
-                float currentDrift = *(float*)(pVehicle + 0x6C);
-                if (currentDrift > score) score = currentDrift;
+                score = *(float*)(pVehicle + 0x6C);
             }
             if (isSpeed || isDrag) {
-                float currentSpeed = *(float*)(pVehicle + 0x70);
-                if (currentSpeed > topSpeed) topSpeed = currentSpeed;
+                topSpeed = *(float*)(pVehicle + 0x70);
             }
         }
 
@@ -329,11 +286,7 @@ namespace RaceResults
         res.reactionTime = 0.0f;
         res.timestamp = (uint64_t)now;
 
-        // Reset live context for next event
-        s_liveContext.driftScore = 0.0f;
-        s_liveContext.topSpeed = 0.0f;
-
-        // Formatted Console Output
+        // Formatted Console Output for Online Leaderboard Proof-of-Concept
         printf("\n============================================================\n");
         printf("[ProStreetRPC] === RACE COMPLETED ===\n");
         printf("[ProStreetRPC] Event ID:      %s\n", res.eventId.c_str());

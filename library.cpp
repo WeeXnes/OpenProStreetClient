@@ -10,7 +10,7 @@
 
 discord::Core *discordCore = nullptr;
 
-const std::string version = "4.2";
+const std::string version = "4.3";
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
                       LPVOID lpReserved) {
@@ -33,14 +33,6 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
     LANFix::Init();
     Tweaks::Init(baseModule);
     RaceResults::Init(baseModule);
-
-    discord::Result result = discord::Core::Create(
-        656565390411038731, DiscordCreateFlags_NoRequireDiscord, &discordCore);
-    if (result != discord::Result::Ok) {
-      printf("[ProStreetRPC] Failed to create Discord core: %d\n", (int)result);
-      return FALSE;
-    }
-    printf("[ProStreetRPC] Discord core created successfully.\n");
 
     HANDLE hThread = CreateThread(NULL, 0, RpcThread, NULL, 0, NULL);
     if (hThread) {
