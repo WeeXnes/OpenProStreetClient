@@ -8,12 +8,13 @@
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
+#include <vector>
 
 namespace RaceResults
 {
     static uintptr_t g_baseModule = 0;
-    static uintptr_t g_origSinglePlayerHandleScreenConstructed = 0;
-    static uintptr_t g_origOnlineHandleScreenConstructed = 0;
+    static void* g_origSinglePlayerHandleScreenConstructed = nullptr;
+    static void* g_origOnlineHandleScreenConstructed = nullptr;
 
     static uint32_t g_lastFinishedEventId = 0;
     static time_t g_lastLogTimestamp = 0;
@@ -89,7 +90,7 @@ namespace RaceResults
     static void ProcessPostRaceResults(uintptr_t baseModule, uint32_t screenId)
     {
         time_t now = time(nullptr);
-        // Throttle to avoid duplicate logs in rapid succession (e.g. results screen -> summary screen)
+        // Throttle to avoid duplicate logs in rapid succession
         if (now - g_lastLogTimestamp < 3 && g_lastLogTimestamp != 0) {
             return;
         }
@@ -318,6 +319,42 @@ namespace RaceResults
         ProcessPostRaceResults(g_baseModule, screenId);
     }
 
+    static bool InstallDetour(void* target, void* detour, void** original, size_t patchSize = 7)
+    {
+        if (!target || IsBadReadPtr(target, patchSize)) return false;
+
+        DWORD oldProtect = 0;
+        if (!VirtualProtect(target, patchSize, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
+
+        BYTE* trampoline = (BYTE*)VirtualAlloc(NULL, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+        if (!trampoline) {
+            VirtualProtect(target, patchSize, oldProtect, &oldProtect);
+            return false;
+        }
+
+        // Copy original bytes to trampoline
+        memcpy(trampoline, target, patchSize);
+
+        // Write JMP back from trampoline to target + patchSize
+        trampoline[patchSize] = 0xE9;
+        uintptr_t jmpBackOffset = ((uintptr_t)target + patchSize) - ((uintptr_t)trampoline + patchSize + 5);
+        memcpy(&trampoline[patchSize + 1], &jmpBackOffset, 4);
+
+        if (original) {
+            *original = (void*)trampoline;
+        }
+
+        // Write JMP from target to detour
+        std::vector<BYTE> jmpBuf(patchSize, 0x90);
+        jmpBuf[0] = 0xE9;
+        uintptr_t detourOffset = (uintptr_t)detour - ((uintptr_t)target + 5);
+        memcpy(&jmpBuf[1], &detourOffset, 4);
+        memcpy(target, jmpBuf.data(), patchSize);
+
+        VirtualProtect(target, patchSize, oldProtect, &oldProtect);
+        return true;
+    }
+
     void Init(uintptr_t baseModule)
     {
         if (!baseModule) return;
@@ -325,32 +362,15 @@ namespace RaceResults
 
         printf("[ProStreetRPC] Initializing Post-Race State Manager Hooks...\n");
 
-        uintptr_t vTableSP = baseModule + 0x5774C4;
-        uintptr_t vTableLocSP = vTableSP + 0x128;
+        uintptr_t loc_5A7750 = baseModule + 0x1A7750;
+        uintptr_t loc_5FA460 = baseModule + 0x1FA460;
 
-        uintptr_t vTableOnline = baseModule + 0x57C964;
-        uintptr_t vTableLocOnline = vTableOnline + 0x128;
-
-        if (!IsBadReadPtr((void*)vTableLocSP, sizeof(uintptr_t))) {
-            g_origSinglePlayerHandleScreenConstructed = *(uintptr_t*)vTableLocSP;
-
-            DWORD oldProtect;
-            if (VirtualProtect((void*)vTableLocSP, sizeof(uintptr_t), PAGE_EXECUTE_READWRITE, &oldProtect)) {
-                *(uintptr_t*)vTableLocSP = (uintptr_t)SinglePlayer_HandleScreenConstructed_Hook;
-                VirtualProtect((void*)vTableLocSP, sizeof(uintptr_t), oldProtect, &oldProtect);
-                printf("[ProStreetRPC] SP PostRaceStateManager hook installed at 0x%p (orig: 0x%p)\n", (void*)vTableLocSP, (void*)g_origSinglePlayerHandleScreenConstructed);
-            }
+        if (InstallDetour((void*)loc_5A7750, (void*)SinglePlayer_HandleScreenConstructed_Hook, &g_origSinglePlayerHandleScreenConstructed, 7)) {
+            printf("[ProStreetRPC] SP PostRaceStateManager hook installed at 0x%p (orig trampoline: 0x%p)\n", (void*)loc_5A7750, g_origSinglePlayerHandleScreenConstructed);
         }
 
-        if (!IsBadReadPtr((void*)vTableLocOnline, sizeof(uintptr_t))) {
-            g_origOnlineHandleScreenConstructed = *(uintptr_t*)vTableLocOnline;
-
-            DWORD oldProtect;
-            if (VirtualProtect((void*)vTableLocOnline, sizeof(uintptr_t), PAGE_EXECUTE_READWRITE, &oldProtect)) {
-                *(uintptr_t*)vTableLocOnline = (uintptr_t)Online_HandleScreenConstructed_Hook;
-                VirtualProtect((void*)vTableLocOnline, sizeof(uintptr_t), oldProtect, &oldProtect);
-                printf("[ProStreetRPC] Online PostRaceStateManager hook installed at 0x%p (orig: 0x%p)\n", (void*)vTableLocOnline, (void*)g_origOnlineHandleScreenConstructed);
-            }
+        if (InstallDetour((void*)loc_5FA460, (void*)Online_HandleScreenConstructed_Hook, &g_origOnlineHandleScreenConstructed, 7)) {
+            printf("[ProStreetRPC] Online PostRaceStateManager hook installed at 0x%p (orig trampoline: 0x%p)\n", (void*)loc_5FA460, g_origOnlineHandleScreenConstructed);
         }
     }
 }
