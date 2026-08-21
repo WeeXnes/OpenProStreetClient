@@ -99,6 +99,24 @@ DWORD WINAPI RpcThread(LPVOID param) {
                 lastLoggedMode = raceMode;
             }
 
+            // Feed live context to RaceResults
+            uint32_t liveEventHash = 0;
+            uintptr_t gRaceStatusBase = baseModule + 0x6B9D7C;
+            if (IsBadReadPtr((void*)gRaceStatusBase, sizeof(uintptr_t)) == 0) {
+                uintptr_t gRaceStatus = *(uintptr_t*)gRaceStatusBase;
+                if (gRaceStatus != 0 && IsBadReadPtr((void*)(gRaceStatus + 0x2D04), sizeof(uintptr_t)) == 0) {
+                    uintptr_t raceObj = *(uintptr_t*)(gRaceStatus + 0x2D04);
+                    if (raceObj != 0 && IsBadReadPtr((void*)(raceObj + 0x04), sizeof(uintptr_t)) == 0) {
+                        uintptr_t eventData = *(uintptr_t*)(raceObj + 0x04);
+                        if (eventData != 0 && IsBadReadPtr((void*)eventData, 0x10) == 0) {
+                            liveEventHash = *(uint32_t*)(eventData + 0x00);
+                            if (liveEventHash == 0) liveEventHash = *(uint32_t*)(eventData + 0x04);
+                        }
+                    }
+                }
+            }
+            RaceResults::UpdateLiveContext(rawMap, displayMap, rawCar, displayCar, raceMode, liveEventHash);
+
             unsigned long long money = 0;
             unsigned long long xp = 0;
 

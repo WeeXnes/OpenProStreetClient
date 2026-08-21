@@ -8,9 +8,9 @@
 
 struct RaceResult {
     std::string eventId;         // Hex string of the event hash (e.g. "0x881F8EFA")
-    std::string trackKey;        // Raw internal track identifier (e.g. "portland_b")
-    std::string trackName;       // Display track name (e.g. "Portland International Raceway")
-    std::string raceMode;        // Race mode (e.g. "Grip", "Drift", "1/4 Mile Drag")
+    std::string trackKey;        // Raw internal track identifier (e.g. "autobahn_gd")
+    std::string trackName;       // Display track name (e.g. "Autobahnring")
+    std::string raceMode;        // Race mode (e.g. "Speed Challenge", "Grip", "1/4 Mile Drag")
     std::string carKey;          // Raw car key (e.g. "GTR")
     std::string carName;         // Translated car name (e.g. "Nissan GT-R (R35)")
     int position;                // Finish position (1 = 1st, 2 = 2nd, etc.)
@@ -26,8 +26,14 @@ struct RaceResult {
 
 namespace RaceResults
 {
-    // Initializes the Post-Race State Manager vtable hooks
+    // Initializes the Post-Race State Manager trampoline hooks
     void Init(uintptr_t baseModule);
+
+    // Feeds live telemetry / context from the RPC loop
+    void UpdateLiveContext(const std::string& rawMap, const std::string& displayMap,
+                           const std::string& rawCar, const std::string& displayCar,
+                           const std::string& raceMode, uint32_t eventHash,
+                           float driftScore = 0.0f, float topSpeed = 0.0f);
 }
 
 #endif // PROSTREETRPC_RACE_RESULTS_H

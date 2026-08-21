@@ -19,6 +19,46 @@ namespace RaceResults
     static uint32_t g_lastFinishedEventId = 0;
     static time_t g_lastLogTimestamp = 0;
 
+    struct LiveRaceContext {
+        std::string rawMap;
+        std::string displayMap;
+        std::string rawCar;
+        std::string displayCar;
+        std::string raceMode;
+        uint32_t eventHash = 0;
+        float driftScore = 0.0f;
+        float topSpeed = 0.0f;
+    };
+
+    static LiveRaceContext s_liveContext;
+
+    void UpdateLiveContext(const std::string& rawMap, const std::string& displayMap,
+                           const std::string& rawCar, const std::string& displayCar,
+                           const std::string& raceMode, uint32_t eventHash,
+                           float driftScore, float topSpeed)
+    {
+        if (!displayMap.empty()) {
+            s_liveContext.rawMap = rawMap;
+            s_liveContext.displayMap = displayMap;
+        }
+        if (!displayCar.empty()) {
+            s_liveContext.rawCar = rawCar;
+            s_liveContext.displayCar = displayCar;
+        }
+        if (!raceMode.empty()) {
+            s_liveContext.raceMode = raceMode;
+        }
+        if (eventHash != 0) {
+            s_liveContext.eventHash = eventHash;
+        }
+        if (driftScore > s_liveContext.driftScore) {
+            s_liveContext.driftScore = driftScore;
+        }
+        if (topSpeed > s_liveContext.topSpeed) {
+            s_liveContext.topSpeed = topSpeed;
+        }
+    }
+
     static std::string FormatSecondsToTime(float seconds) {
         if (seconds <= 0.0f || seconds > 36000.0f) {
             return "0:00.000";
@@ -119,6 +159,9 @@ namespace RaceResults
                 }
             }
         }
+        if (rawEventHash == 0) {
+            rawEventHash = s_liveContext.eventHash;
+        }
 
         // Skip if duplicate event
         if (rawEventHash != 0 && rawEventHash == g_lastFinishedEventId && (now - g_lastLogTimestamp < 10)) {
@@ -149,34 +192,47 @@ namespace RaceResults
 
         if (!playerRacer) return;
 
-        // 2. Track & Mode & Car
+        // 2. Track & Mode & Car (with live context fallback)
         std::string rawMap = ReadRawMapIdentifier(baseModule);
+        if (rawMap.empty()) rawMap = s_liveContext.rawMap;
         std::string displayMap = TranslateMapIdentifier(rawMap);
+        if (displayMap.empty()) displayMap = s_liveContext.displayMap;
+
         std::string raceMode = ReadRaceMode(baseModule);
+        if (raceMode.empty()) raceMode = s_liveContext.raceMode;
+        if (raceMode.empty()) raceMode = "Race";
+
         std::string rawCar = ReadRawCarIdentifier(baseModule);
+        if (rawCar.empty()) rawCar = s_liveContext.rawCar;
         std::string displayCar = TranslateCarIdentifier(rawCar);
+        if (displayCar.empty()) displayCar = s_liveContext.displayCar;
 
         bool isDrag = (screenId == 5 || raceMode.find("Drag") != std::string::npos || raceMode.find("Wheelie") != std::string::npos);
         bool isDrift = (screenId == 3 || raceMode.find("Drift") != std::string::npos);
         bool isSpeed = (screenId == 4 || raceMode.find("Speed") != std::string::npos || raceMode.find("Sector") != std::string::npos);
 
         // 3. Timing and Lap Extraction
-        float finishDelta = 0.0f;
-        if (IsBadReadPtr((void*)(playerRacer + 0x458), sizeof(float)) == 0) {
-            finishDelta = *(float*)(playerRacer + 0x458);
-        }
-
         std::vector<float> lapTimes;
         std::vector<float> heatTimes;
         float bestLap = 0.0f;
         float totalTime = 0.0f;
+
+        float bestLapRecorded = 0.0f;
+        if (IsBadReadPtr((void*)(playerRacer + 0x464), sizeof(float)) == 0) {
+            bestLapRecorded = *(float*)(playerRacer + 0x464);
+        }
+
+        float finishTimeRecorded = 0.0f;
+        if (IsBadReadPtr((void*)(playerRacer + 0x474), sizeof(float)) == 0) {
+            finishTimeRecorded = *(float*)(playerRacer + 0x474);
+        }
 
         if (isDrag) {
             // Drag: read Heat 1, Heat 2, Heat 3
             for (int off = 0x8C; off <= 0x94; off += 4) {
                 if (IsBadReadPtr((void*)(playerRacer + off), sizeof(float)) == 0) {
                     float heat = *(float*)(playerRacer + off);
-                    if (heat > 0.001f && heat < 36000.0f) {
+                    if (heat > 0.1f && heat < 300.0f) {
                         heatTimes.push_back(heat);
                         if (bestLap <= 0.0f || heat < bestLap) {
                             bestLap = heat;
@@ -184,41 +240,56 @@ namespace RaceResults
                     }
                 }
             }
-            if (heatTimes.empty() && finishDelta > 0.001f && finishDelta < 36000.0f) {
-                heatTimes.push_back(finishDelta);
-                bestLap = finishDelta;
+            if (heatTimes.empty() && bestLapRecorded > 0.1f && bestLapRecorded < 300.0f) {
+                heatTimes.push_back(bestLapRecorded);
+                bestLap = bestLapRecorded;
+            }
+            totalTime = bestLap;
+        } else if (isSpeed) {
+            // Speed Challenge / Top Speed (Point-to-point / Single run)
+            if (bestLapRecorded > 0.1f && bestLapRecorded < 36000.0f) {
+                bestLap = bestLapRecorded;
+            } else if (finishTimeRecorded > 0.1f && finishTimeRecorded < 36000.0f) {
+                bestLap = finishTimeRecorded;
+            } else if (IsBadReadPtr((void*)(playerRacer + 0x8C), sizeof(float)) == 0) {
+                float l1 = *(float*)(playerRacer + 0x8C);
+                if (l1 > 0.1f && l1 < 36000.0f) bestLap = l1;
             }
             totalTime = bestLap;
         } else {
-            // Grip / Standard: read all recorded laps
+            // Grip / Circuit: read laps
             for (int off = 0x8C; off <= 0xCC; off += 4) {
                 if (IsBadReadPtr((void*)(playerRacer + off), sizeof(float)) == 0) {
                     float lap = *(float*)(playerRacer + off);
-                    if (lap > 0.001f && lap < 36000.0f) {
+                    if (lap > 0.1f && lap < 36000.0f) {
                         lapTimes.push_back(lap);
                         if (bestLap <= 0.0f || lap < bestLap) {
                             bestLap = lap;
                         }
+                        totalTime += lap;
                     }
                 }
             }
-            if (finishDelta > 0.001f && finishDelta < 36000.0f) {
-                totalTime = finishDelta;
-            } else if (!lapTimes.empty()) {
-                for (float l : lapTimes) totalTime += l;
+            if (bestLap <= 0.0f && bestLapRecorded > 0.1f && bestLapRecorded < 36000.0f) {
+                bestLap = bestLapRecorded;
+            }
+            if (totalTime <= 0.0f) {
+                totalTime = bestLap;
             }
         }
 
         // 4. Score / Top Speed
-        float score = 0.0f;
-        float topSpeed = 0.0f;
+        float score = s_liveContext.driftScore;
+        float topSpeed = s_liveContext.topSpeed;
         uintptr_t pVehicle = *(uintptr_t*)(playerRacer + 0x0C);
         if (pVehicle != 0 && IsBadReadPtr((void*)pVehicle, 0x80) == 0) {
             if (isDrift) {
-                score = *(float*)(pVehicle + 0x6C);
+                float currentDrift = *(float*)(pVehicle + 0x6C);
+                if (currentDrift > score) score = currentDrift;
             }
             if (isSpeed || isDrag) {
-                topSpeed = *(float*)(pVehicle + 0x70);
+                float currentSpeed = *(float*)(pVehicle + 0x70);
+                if (currentSpeed > topSpeed) topSpeed = currentSpeed;
             }
         }
 
@@ -245,7 +316,7 @@ namespace RaceResults
         res.eventId = eventIdHex.str();
         res.trackKey = rawMap;
         res.trackName = displayMap.empty() ? rawMap : displayMap;
-        res.raceMode = raceMode.empty() ? "Race" : raceMode;
+        res.raceMode = raceMode;
         res.carKey = rawCar;
         res.carName = displayCar.empty() ? rawCar : displayCar;
         res.position = position;
@@ -257,6 +328,10 @@ namespace RaceResults
         res.topSpeedKmh = topSpeed;
         res.reactionTime = 0.0f;
         res.timestamp = (uint64_t)now;
+
+        // Reset live context for next event
+        s_liveContext.driftScore = 0.0f;
+        s_liveContext.topSpeed = 0.0f;
 
         // Formatted Console Output
         printf("\n============================================================\n");
