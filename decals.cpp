@@ -14,6 +14,7 @@ namespace Decals
     static uintptr_t g_baseModule = 0;
     static std::vector<CustomDecal> g_customDecals;
     static void* g_origFindTexture = nullptr;
+    static void* g_origGetCategoryData = nullptr;
 
     #pragma pack(push, 1)
     struct EATexture
@@ -34,6 +35,8 @@ namespace Decals
     #pragma pack(pop)
 
     static std::vector<EATexture> g_eaTextures;
+    static std::vector<uint32_t> g_expandedHashes;
+    static bool g_injectedIntoCategory = false;
 
     // Standard EA BinHash implementation (used across all NFS games for texture & car identifiers)
     static uint32_t bStringHash(const char* str)
@@ -146,6 +149,7 @@ namespace Decals
     {
         g_customDecals.clear();
         g_eaTextures.clear();
+        g_injectedIntoCategory = false;
 
         // Create scripts/decals directory if it doesn't exist
         CreateDirectoryA("scripts", NULL);
@@ -174,7 +178,48 @@ namespace Decals
         return reinterpret_cast<void*(__attribute__((thiscall))*)(void*, uint32_t)>(g_origFindTexture)(thisPtr, hash);
     }
 
-    static bool InstallDetour(void* target, void* detour, void** original, size_t patchSize = 7)
+    static void* __attribute__((cdecl)) GetCategoryVinylData_Hook(uint32_t categoryKey)
+    {
+        void* res = reinterpret_cast<void*(__attribute__((cdecl))*)(uint32_t)>(g_origGetCategoryData)(categoryKey);
+        
+        // Category 4 = Flags (Flaggen), Category 0 = Aftermarket/Sponsors
+        if (res && (categoryKey == 4 || categoryKey == 0) && !g_customDecals.empty()) {
+            uintptr_t catPtr = (uintptr_t)res;
+            uint32_t* origArray = *(uint32_t**)catPtr;
+            uint32_t origCount = *(uint32_t*)(catPtr + 0x04);
+
+            if (origArray && origCount > 0 && origCount < 500) {
+                // Check if already injected
+                bool alreadyInjected = false;
+                for (uint32_t i = 0; i < origCount; ++i) {
+                    if (origArray[i] == g_customDecals[0].hash) {
+                        alreadyInjected = true;
+                        break;
+                    }
+                }
+
+                if (!alreadyInjected) {
+                    g_expandedHashes.clear();
+                    g_expandedHashes.reserve(origCount + g_customDecals.size());
+                    for (uint32_t i = 0; i < origCount; ++i) {
+                        g_expandedHashes.push_back(origArray[i]);
+                    }
+                    for (const auto& d : g_customDecals) {
+                        g_expandedHashes.push_back(d.hash);
+                    }
+
+                    *(uint32_t**)catPtr = g_expandedHashes.data();
+                    *(uint32_t*)(catPtr + 0x04) = (uint32_t)g_expandedHashes.size();
+                    printf("[ProStreetRPC] Injected %u custom decal(s) into category %u (Total: %u)\n", 
+                           (unsigned)g_customDecals.size(), categoryKey, (unsigned)g_expandedHashes.size());
+                }
+            }
+        }
+
+        return res;
+    }
+
+    static bool InstallDetour(void* target, void* detour, void** original, size_t patchSize = 6)
     {
         if (!target || IsBadReadPtr(target, patchSize)) return false;
 
@@ -218,6 +263,11 @@ namespace Decals
         uintptr_t loc_4614B0 = baseModule + 0x614B0;
         if (InstallDetour((void*)loc_4614B0, (void*)TexturePack_FindTexture_Hook, &g_origFindTexture, 6)) {
             printf("[ProStreetRPC] TexturePack::FindTexture hook installed at 0x%p\n", (void*)loc_4614B0);
+        }
+
+        uintptr_t loc_754E00 = baseModule + 0x354E00;
+        if (InstallDetour((void*)loc_754E00, (void*)GetCategoryVinylData_Hook, &g_origGetCategoryData, 6)) {
+            printf("[ProStreetRPC] Category Vinyl Populator hook installed at 0x%p\n", (void*)loc_754E00);
         }
     }
 }
