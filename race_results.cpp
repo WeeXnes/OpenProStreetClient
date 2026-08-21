@@ -138,6 +138,7 @@ namespace RaceResults
             return;
         }
 
+        // 2. Locate Human Player RacerInfo in GRaceStatus (+0x20)
         uintptr_t playerRacer = 0;
         if (IsBadReadPtr((void*)(gRaceStatus + 0x20), 0x80) == 0) {
             playerRacer = gRaceStatus + 0x20;
@@ -145,7 +146,7 @@ namespace RaceResults
 
         if (!playerRacer) return;
 
-        // 2. Track & Mode & Car
+        // 3. Track & Mode & Car
         std::string rawMap = ReadRawMapIdentifier(baseModule);
         std::string displayMap = TranslateMapIdentifier(rawMap);
         std::string raceMode = ReadRaceMode(baseModule);
@@ -165,7 +166,7 @@ namespace RaceResults
         bool isDrag = (screenId == 5 || raceMode.find("Drag") != std::string::npos || raceMode.find("Wheelie") != std::string::npos);
         bool isDrift = (screenId == 3 || raceMode.find("Drift") != std::string::npos);
 
-        // 3. Timing and Lap Extraction
+        // 4. Extract Timing from RacerInfo (+0x8C lap array, +0x464 best lap, +0x474 finish time)
         std::vector<float> lapTimes;
         std::vector<float> heatTimes;
         float bestLap = 0.0f;
@@ -186,89 +187,66 @@ namespace RaceResults
             finishDeltaRecorded = *(float*)(playerRacer + 0x458);
         }
 
-        float lap1Recorded = 0.0f;
-        if (IsBadReadPtr((void*)(playerRacer + 0x8C), sizeof(float)) == 0) {
-            lap1Recorded = *(float*)(playerRacer + 0x8C);
-        }
-
-        // Priority 1: Exact UI Rewards screen time (captured from SetTimeBonus / 0x5982F0)
-        if (g_lastRewardsTime > 0.1f && g_lastRewardsTime < 3600.0f) {
-            totalTime = g_lastRewardsTime;
-            bestLap = g_lastRewardsTime;
-            lapTimes.push_back(g_lastRewardsTime);
-        } else if (isDrag) {
-            // Drag Heats
-            for (int off = 0x8C; off <= 0x94; off += 4) {
-                if (IsBadReadPtr((void*)(playerRacer + off), sizeof(float)) == 0) {
-                    float heat = *(float*)(playerRacer + off);
-                    if (heat > 0.1f && heat < 300.0f) {
-                        heatTimes.push_back(heat);
-                        if (bestLap <= 0.0f || heat < bestLap) {
-                            bestLap = heat;
-                        }
-                    }
-                }
-            }
-            if (heatTimes.empty() && bestLapRecorded > 0.1f && bestLapRecorded < 300.0f) {
-                heatTimes.push_back(bestLapRecorded);
-                bestLap = bestLapRecorded;
-            }
-            if (heatTimes.empty() && finishTimeRecorded > 0.1f && finishTimeRecorded < 300.0f) {
-                heatTimes.push_back(finishTimeRecorded);
-                bestLap = finishTimeRecorded;
-            }
-            totalTime = bestLap;
-        } else {
-            // Read multi-laps or single run
-            for (int off = 0x8C; off <= 0xCC; off += 4) {
-                if (IsBadReadPtr((void*)(playerRacer + off), sizeof(float)) == 0) {
-                    float lap = *(float*)(playerRacer + off);
-                    if (lap > 0.1f && lap < 36000.0f) {
+        // Read individual lap times array from RacerInfo (+0x8C..+0xCC)
+        for (int off = 0x8C; off <= 0xCC; off += 4) {
+            if (IsBadReadPtr((void*)(playerRacer + off), sizeof(float)) == 0) {
+                float lap = *(float*)(playerRacer + off);
+                if (lap > 0.1f && lap < 3600.0f) {
+                    if (isDrag) {
+                        heatTimes.push_back(lap);
+                    } else {
                         lapTimes.push_back(lap);
-                        if (bestLap <= 0.0f || lap < bestLap) {
-                            bestLap = lap;
-                        }
-                        totalTime += lap;
+                    }
+                    if (bestLap <= 0.0f || lap < bestLap) {
+                        bestLap = lap;
                     }
                 }
             }
-
-            if (totalTime <= 0.0f) {
-                if (lap1Recorded > 0.1f && lap1Recorded < 36000.0f) totalTime = lap1Recorded;
-                else if (bestLapRecorded > 0.1f && bestLapRecorded < 36000.0f) totalTime = bestLapRecorded;
-                else if (finishTimeRecorded > 0.1f && finishTimeRecorded < 36000.0f) totalTime = finishTimeRecorded;
-                else if (finishDeltaRecorded > 0.1f && finishDeltaRecorded < 36000.0f) totalTime = finishDeltaRecorded;
-            }
-
-            if (bestLap <= 0.0f) {
-                bestLap = (bestLapRecorded > 0.1f) ? bestLapRecorded : totalTime;
-            }
         }
 
-        // 4. Score / Top Speed
-        float score = (g_lastRewardsPoints > 0.0f) ? g_lastRewardsPoints : 0.0f;
-        float topSpeed = 0.0f;
-        uintptr_t pVehicle = *(uintptr_t*)(playerRacer + 0x0C);
-        if (pVehicle != 0 && IsBadReadPtr((void*)pVehicle, 0x80) == 0) {
-            if (isDrift && score <= 0.0f) {
-                score = *(float*)(pVehicle + 0x6C);
-            }
-            topSpeed = *(float*)(pVehicle + 0x70);
+        // Determine Total Finish Time
+        if (finishTimeRecorded > 0.1f && finishTimeRecorded < 36000.0f) {
+            totalTime = finishTimeRecorded;
+        } else if (g_lastRewardsTime > 0.1f && g_lastRewardsTime < 3600.0f) {
+            totalTime = g_lastRewardsTime;
+        } else if (!lapTimes.empty()) {
+            totalTime = 0.0f;
+            for (float l : lapTimes) totalTime += l;
+        } else if (finishDeltaRecorded > 0.1f && finishDeltaRecorded < 36000.0f) {
+            totalTime = finishDeltaRecorded;
         }
 
-        // Check fallback top speed in RacerInfo
-        if (topSpeed <= 0.0f && IsBadReadPtr((void*)(playerRacer + 0x450), sizeof(float)) == 0) {
-            float ts = *(float*)(playerRacer + 0x450);
-            if (ts > 1.0f && ts < 600.0f) topSpeed = ts;
+        // Determine Best Lap / Run
+        if (bestLapRecorded > 0.1f && bestLapRecorded < 3600.0f) {
+            bestLap = bestLapRecorded;
+        } else if (bestLap <= 0.0f) {
+            bestLap = totalTime;
         }
 
-        // 5. Position
+        // 5. Extract Position from RacerInfo (+0x48)
         int position = 1;
         if (IsBadReadPtr((void*)(playerRacer + 0x48), sizeof(int32_t)) == 0) {
             int pos = *(int32_t*)(playerRacer + 0x48);
             if (pos >= 1 && pos <= 8) {
                 position = pos;
             }
+        }
+
+        // 6. Extract Top Speed from RacerInfo (+0x450) and Score
+        float topSpeed = 0.0f;
+        if (IsBadReadPtr((void*)(playerRacer + 0x450), sizeof(float)) == 0) {
+            float ts = *(float*)(playerRacer + 0x450);
+            if (ts > 1.0f && ts < 600.0f) topSpeed = ts;
+        }
+
+        uintptr_t pVehicle = *(uintptr_t*)(playerRacer + 0x0C);
+        if (topSpeed <= 0.0f && pVehicle != 0 && IsBadReadPtr((void*)pVehicle, 0x80) == 0) {
+            topSpeed = *(float*)(pVehicle + 0x70);
+        }
+
+        float score = (g_lastRewardsPoints > 0.0f) ? g_lastRewardsPoints : 0.0f;
+        if (isDrift && score <= 0.0f && pVehicle != 0 && IsBadReadPtr((void*)pVehicle, 0x80) == 0) {
+            score = *(float*)(pVehicle + 0x6C);
         }
 
         g_lastFinishedEventId = rawEventHash;
@@ -309,10 +287,10 @@ namespace RaceResults
 
         if (isDrag) {
             for (size_t h = 0; h < res.heatTimes.size(); ++h) {
-                printf("[ProStreetRPC] Heat %u Time:   %s (%.3fs)\n", (unsigned)(h + 1), FormatSecondsToTime(res.heatTimes[h]).c_str(), res.heatTimes[h]);
+                printf("[ProStreetRPC] Heat %u:        %s (%.3fs)\n", (unsigned)(h + 1), FormatSecondsToTime(res.heatTimes[h]).c_str(), res.heatTimes[h]);
             }
             if (res.bestLapSeconds > 0.0f) {
-                printf("[ProStreetRPC] Best Run Time: %s (%.3fs)\n", FormatSecondsToTime(res.bestLapSeconds).c_str(), res.bestLapSeconds);
+                printf("[ProStreetRPC] Best Run:      %s (%.3fs)\n", FormatSecondsToTime(res.bestLapSeconds).c_str(), res.bestLapSeconds);
             }
         } else {
             if (res.totalTimeSeconds > 0.0f) {
@@ -321,10 +299,14 @@ namespace RaceResults
             if (res.bestLapSeconds > 0.0f && res.bestLapSeconds != res.totalTimeSeconds) {
                 printf("[ProStreetRPC] Best Lap:      %s (%.3fs)\n", FormatSecondsToTime(res.bestLapSeconds).c_str(), res.bestLapSeconds);
             }
+            // Print individual laps breakdown
+            for (size_t l = 0; l < res.lapTimes.size(); ++l) {
+                printf("[ProStreetRPC] Lap %u:         %s (%.3fs)\n", (unsigned)(l + 1), FormatSecondsToTime(res.lapTimes[l]).c_str(), res.lapTimes[l]);
+            }
         }
 
         if (res.score > 0.0f) {
-            printf("[ProStreetRPC] Score/Points:  %.0f pts\n", res.score);
+            printf("[ProStreetRPC] Score / Pts:   %.0f pts\n", res.score);
         }
         if (res.topSpeedKmh > 0.0f) {
             printf("[ProStreetRPC] Top Speed:     %.1f km/h\n", res.topSpeedKmh);
