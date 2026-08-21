@@ -15,6 +15,7 @@ namespace Decals
     static uintptr_t g_baseModule = 0;
     static std::vector<CustomDecal> g_customDecals;
     static void* g_origFindTexture = nullptr;
+    static void* g_origGetCustomizationPartsList = nullptr;
 
     #pragma pack(push, 1)
     struct EATexture
@@ -226,6 +227,38 @@ namespace Decals
         return reinterpret_cast<void*(__attribute__((thiscall))*)(void*, uint32_t)>(g_origFindTexture)(thisPtr, hash);
     }
 
+    static void* __attribute__((thiscall)) DAL_GetCustomizationPartsList_Hook(void* thisPtr, uint8_t slotType)
+    {
+        void* res = reinterpret_cast<void*(__attribute__((thiscall))*)(void*, uint8_t)>(g_origGetCustomizationPartsList)(thisPtr, slotType);
+
+        if (res && !g_customDecals.empty() && !IsBadReadPtr(res, 64)) {
+            uint32_t* pCount = (uint32_t*)res;
+            uint32_t count = *pCount;
+            uint32_t* hashes = (uint32_t*)((uintptr_t)res + 4);
+
+            if (count > 0 && count < 200 && !IsBadReadPtr(hashes, count * 4)) {
+                bool alreadyInjected = false;
+                for (uint32_t i = 0; i < count; ++i) {
+                    if (hashes[i] == g_customDecals[0].hash) {
+                        alreadyInjected = true;
+                        break;
+                    }
+                }
+
+                if (!alreadyInjected) {
+                    for (size_t i = 0; i < g_customDecals.size() && (count + i) < 500; ++i) {
+                        hashes[count + i] = g_customDecals[i].hash;
+                    }
+                    *pCount = count + (uint32_t)g_customDecals.size();
+                    printf("[ProStreetRPC] Injected %u custom decal(s) into Decal Slot %u (New total: %u)\n",
+                           (unsigned)g_customDecals.size(), (unsigned)slotType, *pCount);
+                }
+            }
+        }
+
+        return res;
+    }
+
     static bool InstallDetour(void* target, void* detour, void** original, size_t patchSize = 6)
     {
         if (!target || IsBadReadPtr(target, patchSize)) return false;
@@ -271,6 +304,12 @@ namespace Decals
         uintptr_t loc_4614B0 = baseModule + 0x614B0;
         if (InstallDetour((void*)loc_4614B0, (void*)TexturePack_FindTexture_Hook, &g_origFindTexture, 6)) {
             printf("[ProStreetRPC] TexturePack::FindTexture hook installed at 0x%p\n", (void*)loc_4614B0);
+        }
+
+        // Hook DALCarCustomization::GetPartsList at 0x00533410 (exact 6 bytes)
+        uintptr_t loc_533410 = baseModule + 0x133410;
+        if (InstallDetour((void*)loc_533410, (void*)DAL_GetCustomizationPartsList_Hook, &g_origGetCustomizationPartsList, 6)) {
+            printf("[ProStreetRPC] DAL::GetCustomizationPartsList hook installed at 0x%p\n", (void*)loc_533410);
         }
     }
 }
