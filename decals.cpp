@@ -216,7 +216,7 @@ namespace Decals
         ReloadDecals();
 
         uintptr_t loc_4614B0 = baseModule + 0x614B0;
-        if (InstallDetour((void*)loc_4614B0, (void*)TexturePack_FindTexture_Hook, &g_origFindTexture, 7)) {
+        if (InstallDetour((void*)loc_4614B0, (void*)TexturePack_FindTexture_Hook, &g_origFindTexture, 6)) {
             printf("[ProStreetRPC] TexturePack::FindTexture hook installed at 0x%p\n", (void*)loc_4614B0);
         }
     }
