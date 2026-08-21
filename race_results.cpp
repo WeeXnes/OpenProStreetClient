@@ -91,7 +91,7 @@ namespace RaceResults
     {
         time_t now = time(nullptr);
         // Throttle duplicate calls in rapid succession
-        if (now - g_lastLogTimestamp < 3 && g_lastLogTimestamp != 0) {
+        if (now - g_lastLogTimestamp < 2 && g_lastLogTimestamp != 0) {
             return;
         }
 
@@ -186,6 +186,11 @@ namespace RaceResults
             finishTimeRecorded = *(float*)(playerRacer + 0x474);
         }
 
+        float elapsedRaceTime = 0.0f;
+        if (IsBadReadPtr((void*)(gRaceStatus + 0x2CE4), sizeof(float)) == 0) {
+            elapsedRaceTime = *(float*)(gRaceStatus + 0x2CE4);
+        }
+
         if (isDrag) {
             // Drag: read Heat 1, Heat 2, Heat 3
             for (int off = 0x8C; off <= 0x94; off += 4) {
@@ -203,9 +208,13 @@ namespace RaceResults
                 heatTimes.push_back(bestLapRecorded);
                 bestLap = bestLapRecorded;
             }
+            if (heatTimes.empty() && finishTimeRecorded > 0.1f && finishTimeRecorded < 300.0f) {
+                heatTimes.push_back(finishTimeRecorded);
+                bestLap = finishTimeRecorded;
+            }
             totalTime = bestLap;
         } else if (isSpeed) {
-            // Speed Challenge / Top Speed (Point-to-point / Single run)
+            // Speed Challenge / Top Speed / Sector Shootout
             if (bestLapRecorded > 0.1f && bestLapRecorded < 36000.0f) {
                 bestLap = bestLapRecorded;
             } else if (finishTimeRecorded > 0.1f && finishTimeRecorded < 36000.0f) {
@@ -214,6 +223,11 @@ namespace RaceResults
                 float l1 = *(float*)(playerRacer + 0x8C);
                 if (l1 > 0.1f && l1 < 36000.0f) bestLap = l1;
             }
+
+            if (bestLap <= 0.0f && elapsedRaceTime > 0.1f && elapsedRaceTime < 36000.0f) {
+                bestLap = elapsedRaceTime;
+            }
+
             totalTime = bestLap;
         } else {
             // Grip / Circuit: read laps
@@ -233,7 +247,10 @@ namespace RaceResults
                 bestLap = bestLapRecorded;
             }
             if (totalTime <= 0.0f) {
-                totalTime = bestLap;
+                totalTime = (finishTimeRecorded > 0.1f) ? finishTimeRecorded : (bestLap > 0.1f ? bestLap : elapsedRaceTime);
+            }
+            if (bestLap <= 0.0f) {
+                bestLap = totalTime;
             }
         }
 
@@ -248,6 +265,12 @@ namespace RaceResults
             if (isSpeed || isDrag) {
                 topSpeed = *(float*)(pVehicle + 0x70);
             }
+        }
+
+        // Check fallback top speed in RacerInfo
+        if (topSpeed <= 0.0f && IsBadReadPtr((void*)(playerRacer + 0x450), sizeof(float)) == 0) {
+            float ts = *(float*)(playerRacer + 0x450);
+            if (ts > 1.0f && ts < 600.0f) topSpeed = ts;
         }
 
         // 5. Position

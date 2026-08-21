@@ -4,7 +4,7 @@
 
 namespace Tweaks
 {
-    static const char* g_customCopyrightString = "© 2007 Electronic Arts Inc. All rights reserved.^ProStreetRPC v4.3 by WeeXnes";
+    static const char* g_customCopyrightString = "© 2007 Electronic Arts Inc. All rights reserved.^ProStreetRPC v4.4 by WeeXnes";
     static uintptr_t g_loc_595859 = 0;
 
     static void PatchMemory(uintptr_t address, const void* data, size_t size)
