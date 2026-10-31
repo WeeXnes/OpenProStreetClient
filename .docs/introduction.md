@@ -10,7 +10,7 @@ It runs inside `nfs.exe`, without changing the game's files:
 
 - **Secure login:** encrypts everything the game sends to an OpenProStreet server, and logs you in with a key instead of the game's plaintext password.
 - **Race results:** reports lap times and race details to the server after each race, for records and leaderboards.
-- **Quick match:** tells the server when you pick quick match, so it can place you in a room.
+- **Quick match:** sends the game's "Schnelles Spiel" menu to the OpenProStreet server instead of EA's closed servers, and joins the room the server picks.
 - **Windows 10 and 11 LAN fix:** lets the game's 2007 network code connect at all.
 - **Discord Rich Presence:** shows your track, race mode, car and Raceday XP.
 - **Custom PNG decals** and other tweaks.

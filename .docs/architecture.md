@@ -100,15 +100,19 @@ If a server never answers the handshake within 2 seconds, it's treated as an old
 
 ## Quick Match
 
-The game's menus run `DALOnlineMatchmakingCommands` objects. Slot 2 of each vtable does the work:
+"Schnelles Spiel" and LAN Play are options in the same menu handler, `FEOnlineMainStateManager` at `0x5CA5E0` (state 2):
 
-| Command | Address | Plugin action |
-| :--- | :--- | :--- |
-| `StartQuickMatch` | `0x544730` | Ask the server for a quick match |
-| `StartQuickMatchFreestyle` | `0x544770` | Ask the server for a quick match |
-| `ContinueSearchQuickMatchFreestyle` | `0x5447B0` | Ask the server for a quick match |
-| `StartCustomRaceDayMultiplayerHub` | `0x5447E0` | Cancel any quick match |
-| `CancelQuickMatch` | `0x544840` | Cancel any quick match |
+| Option | Original behaviour |
+| :--- | :--- |
+| `0x1F` | LAN Play: creates `FELanStateManager` as a child |
+| `0x25` | Ranked quick match: logs in to EA, then `0x5A8E20` |
+| `0x26` | Unranked quick match: logs in to EA, then `0x5A8E20` |
+
+The EA login uses a different backend (`Fesl`, Theater), whose servers are gone. So the plugin changes options `0x25` and `0x26` to `0x1F`, which opens the LAN flow, and tells the server this player wants a match.
+
+When the lobby's game list arrives (`0x7E15C0`), the plugin calls the lobby's join function (`0x7D2620`). The list's first entry is selected, and during a quick match the server only lists rooms the player can join, best first. With an empty list the lobby stays open, so the player can create a race day.
+
+The player still goes through the LAN address and login screens.
 
 ---
 

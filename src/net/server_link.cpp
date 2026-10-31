@@ -42,6 +42,8 @@ namespace ServerLink
     static uint8_t g_identity[64];
     static bool g_hasIdentity = false;
     static int g_nextTransaction = 1;
+    static bool g_quickMatchPending = false;
+    static bool g_quickMatchRanked = false;
 
     class Lock {
     public:
@@ -283,6 +285,11 @@ namespace ServerLink
         std::vector<std::pair<std::string, std::string> > params;
         params.push_back(std::make_pair(std::string("version"), version));
         SendCommand("client", "hello", params);
+        if (g_quickMatchPending) {
+            std::vector<std::pair<std::string, std::string> > quickParams;
+            quickParams.push_back(std::make_pair(std::string("ranked"), std::string(g_quickMatchRanked ? "1" : "0")));
+            SendCommand("matchmaking", "quickMatch", quickParams);
+        }
         printf("[OpenProStreet] Connecting to %s\n", address);
     }
 
@@ -325,15 +332,20 @@ namespace ServerLink
         }
     }
 
-    void RequestQuickMatch() {
-        if (!g_hooked) return;
+    void RequestQuickMatch(bool ranked) {
+        if (!g_hasIdentity) return;
         Lock lock;
-        SendCommand("matchmaking", "quickMatch", std::vector<std::pair<std::string, std::string> >());
+        g_quickMatchPending = true;
+        g_quickMatchRanked = ranked;
+        std::vector<std::pair<std::string, std::string> > params;
+        params.push_back(std::make_pair(std::string("ranked"), std::string(ranked ? "1" : "0")));
+        SendCommand("matchmaking", "quickMatch", params);
     }
 
     void CancelQuickMatch() {
-        if (!g_hooked) return;
+        if (!g_hasIdentity) return;
         Lock lock;
+        g_quickMatchPending = false;
         SendCommand("matchmaking", "cancelQuickMatch", std::vector<std::pair<std::string, std::string> >());
     }
 }

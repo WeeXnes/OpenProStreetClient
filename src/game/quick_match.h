@@ -4,6 +4,7 @@
 
 namespace QuickMatch
 {
-    // Tells the server when the player picks quick match or a custom hub in the game's menus.
+    // Sends "Schnelles Spiel" to the OpenProStreet server through the LAN flow, then joins the
+    // room the server lists first.
     void Init(uintptr_t baseModule);
 }

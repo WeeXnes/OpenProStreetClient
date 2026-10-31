@@ -33,7 +33,8 @@ namespace ServerLink
 
     void SubmitRaceResult(const RaceReport& report);
 
-    // The player picked quick match in the game's menus, so the next game they join is matched.
-    void RequestQuickMatch();
+    // The player picked quick match in the game's menus, so the server should match them. This
+    // happens before the game connects, so it's sent as soon as the connection starts.
+    void RequestQuickMatch(bool ranked);
     void CancelQuickMatch();
 }

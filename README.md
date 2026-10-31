@@ -18,7 +18,7 @@ Pre-compiled release bundles (`OpenProStreetClient_v*.zip`) containing the ASI p
 
 - **Secure Login**: Encrypts all traffic to an OpenProStreet server and logs you in with a key stored on your PC, instead of the game's plaintext password. Older servers still work, without encryption.
 - **Race Results**: Sends your lap times, track, race mode and position to the server after each race, for records and leaderboards.
-- **Quick Match**: The game's quick match places you in the fullest open room on the server.
+- **Quick Match**: "Schnelles Spiel" no longer tries EA's closed servers. It opens the server login, then joins the fullest open room. If there isn't one, you stay in the lobby and can create a race day.
 - **Dynamic Status**: Displays whether you are in a race day, navigating menus, or in career.
 - **Player Car Display**: Detects the car currently driven by the player and translates internal models to real vehicle names (e.g. "Nissan GT-R (R35)", "Mazda RX-7", "Chevrolet Corvette Z06", "Toyota Supra").
 - **Race Mode & Event Type**: Identifies specific race types (e.g. "Grip", "Drift", "1/4 Mile Drag", "Wheelie Competition", "Speed Challenge", "Top Speed Run", "Sector Shootout", "Time Attack", "Grip Class").
