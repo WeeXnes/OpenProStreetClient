@@ -39,7 +39,33 @@ The car is read from the same data the game uses, not by scanning memory for str
 
 Collection names don't always match the model: `showdown_king` is a `LANCEREVOX`, and `gtrproto2` is a `SKYLINER35`. A key that isn't in the table is logged and no car is shown, and nothing is cached, so the status can't go stale.
 
-`GRaceStatus` racer slots hold `GRacerInfo`, and the player is not always slot 0: in an 8-car race the player was slot 7 and slots 0-6 were AI. `[0xBFB400]` is `SimSystem`, not a player object.
+`[0xBFB400]` is `SimSystem`, not a player object.
+
+---
+
+## Race Results (`race_results.cpp`)
+
+`[0xAB9D7C]` is `GRaceStatus`. Racers start at `+0x20`, each `0x594` bytes, with the count at `+0x2CE0`. The player is not always slot 0: in an 8-car race the player was slot 7 and slots 0-6 were AI.
+
+**Finding the local racer**: `[0xACE444]` is the local player list (count at `[0xACE44C]`), the one `PlayerIsLocal` walks. An entry's simable is at `entry - 8`, and the simable's handle at `+8` matches `GRacerInfo +0x10`. If that finds nothing, a single racer with no AI opponent at `+0x14` is used. If neither works, no result is saved, so an AI's data is never recorded as the player's.
+
+| `GRacerInfo` field | Meaning | Evidence |
+| :--- | :--- | :--- |
+| `+0x10` | Simable handle | `GetSimable` (`0x667290`) |
+| `+0x14` | AI opponent object, null for humans | `0x677130`, `0x660920` |
+| `+0x18` | Name, `char[32]` | `GetName` (`0x46E1E0`) |
+| `+0x5C` | Finishing rank, starting at 1 | `CalculateRankings` (`0x683F90`) |
+| `+0x6C` | Score | `0x683B50`, `0x656B20` |
+| `+0x70` | Race time snapshot | `PrePassStatistics` (`0x68DF70`) |
+| `+0x74` | Laps completed | `GetLapsCompleted` (`0x404C80`) |
+| `+0x78` | Top speed in m/s | Max kept while racing (`0x6964D6`), mph to m/s conversion at `0x68DBFC` |
+| `+0x80` | Best lap, `-1` when none | Lap handler (`0x695DE0`) |
+| `+0x2D4` | Last lap, `-1` when none | Lap handler (`0x695DE0`) |
+| `+0x3E8` | Race timer: start, elapsed at `+0x3EC`, running flag at `+0x3F0` | `GetRaceTime` (`0x404C90`) |
+
+The struct has no per-lap time array, so lap times are captured by a hook on the lap handler at `0x695DE0`. A lap count of 0 there means a new race or a restart, which clears the captured laps and the rewards values.
+
+Offsets v5.8 and earlier used wrongly: `+0x48` is inside a second 32-byte string at `+0x38`, `+0x464` and `+0x474` are 3D vectors, and `+0x8C` is an array the game takes a maximum over, not lap times.
 
 ---
 
