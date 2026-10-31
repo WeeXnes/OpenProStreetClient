@@ -1,394 +1,289 @@
 #include "car.h"
 #include <unordered_map>
-#include <algorithm>
-#include <cctype>
+#include <cstdio>
 
+// Attrib::StringHash32 of each "pvehicle" collection name -> CarTypeInfo model name.
+// This is the value stored in FECarRecord +0x08 (returned by DALVehicleCommands::GetPVehicleKey).
+static const std::unordered_map<uint32_t, std::string> VEHICLE_KEY_TO_MODEL = {
+    {0xA86F2BFC, "240SX"}, // 240sx
+    {0x35138539, "350Z"}, // 350z
+    {0x43CB4B89, "997GT3RS"}, // 997
+    {0xD494B7B0, "997GT2"}, // 997gt2
+    {0x5A7F9439, "997TT"}, // 997tt
+    {0xEE55498A, "997TT"}, // 997tt_slotcar
+    {0xDDA4F129, "BMWM3"}, // bmwm3
+    {0x29C56468, "BMWM3E92"}, // bmwm3e92
+    {0x481A9500, "BMWMZ4"}, // bmwmz4
+    {0x90944519, "CAMARO"}, // camaro
+    {0xC097A400, "CAMARON"}, // camaron
+    {0x41555BEB, "CAYMANS"}, // caymans
+    {0xA3906772, "CHALLENGER71"}, // challenger71
+    {0x868D6F75, "CHARGER69"}, // charger69
+    {0x03E07E4E, "CHEVELLE"}, // chevelle
+    {0xF5F12571, "CIVICHB"}, // civichb
+    {0x3C8E22A2, "CIVICSI"}, // civicsi
+    {0x5A784095, "COBALTSS"}, // cobaltss
+    {0x35124316, "COROLLA"}, // corolla
+    {0x46118CE4, "CORVETTE"}, // corvette
+    {0xB5804C5E, "CORVETTE67"}, // corvette67
+    {0x6E7A4133, "CORVETTEZ06"}, // corvettez06
+    {0xE14EA776, "COSWORTH"}, // cosworth
+    {0x9E0638BF, "CTSV"}, // ctsv
+    {0x5F6DF4C6, "CUDA"}, // cuda
+    {0x61458871, "997GT3"}, // dlcbp_997gt3
+    {0x6ABEBCD3, "997GT3RS"}, // dlcbp_997gt3rs
+    {0x5F613893, "CARRERAGT"}, // dlcbp_carreragt
+    {0xB549BBCC, "CCX"}, // dlcbp_ccx
+    {0xF57E7854, "CHALLENGERN"}, // dlcbp_challengern
+    {0x647F5151, "DB9"}, // dlcbp_db9
+    {0x44634919, "DBR9"}, // dlcbp_dbr9
+    {0x4D105407, "DELTA"}, // dlcbp_delta
+    {0x0FCD39E3, "GALLARDOS"}, // dlcbp_gallardos
+    {0xE5A2AB11, "LEONCUPRA"}, // dlcbp_leoncupra
+    {0x9CFB5951, "MCLARENF1"}, // dlcbp_mclarenf1
+    {0xBCEE5129, "R8PROD"}, // dlcbp_r8prod
+    {0xFBE10B4D, "ROADRUNNER"}, // dlcbp_roadrunner
+    {0x69B39015, "S2000"}, // dlcbp_s2000
+    {0x25F4992E, "SL65"}, // dlcbp_sl65
+    {0x3D634591, "VEYRON"}, // dlcbp_veyron
+    {0xB3BF8516, "ECLIPSE"}, // eclipse
+    {0x313D4936, "ELISE"}, // elise
+    {0x1FB6E0E6, "FOCUSST"}, // focusst
+    {0x42C0A5EA, "FORDGT"}, // fordgt
+    {0xE73E8E70, "G35"}, // g35
+    {0x79054B53, "GTI"}, // gti
+    {0xAA483DC6, "GTO"}, // gto
+    {0xE6E22BE4, "GTO65"}, // gto65
+    {0xA5558E31, "GTRPROTO"}, // gtrproto
+    {0xEE484B2B, "SKYLINER35"}, // gtrproto2
+    {0xA232EDC5, "IMPREZAWRXSTI"}, // imprezawrxsti
+    {0x1193D233, "INTEGRALS"}, // integrals
+    {0x85106818, "INTEGRATYPER"}, // integratyper
+    {0xEC764047, "IS350"}, // is350
+    {0x7D41944D, "LANCEREVO9"}, // lancerevo9
+    {0x6B8F9A20, "LANCEREVOX"}, // lancerevox
+    {0x7076AC12, "MAZDASPEED3"}, // mazdaspeed3
+    {0xE4DB67B3, "MURCIELAGO640"}, // murcielago640
+    {0xA9DE680B, "MUSTANG03"}, // mustang03
+    {0x9B93FD4D, "MUSTANGGT"}, // mustanggt
+    {0xB927B74E, "MUSTANGSHLBYN"}, // mustangshlbyn
+    {0x02A60A50, "MUSTANGSHLBYO"}, // mustangshlbyo
+    {0x033115AF, "NSX"}, // nsx
+    {0x942BBF21, "R32"}, // r32
+    {0x4771A048, "RS4"}, // rs4
+    {0x00E489BB, "RSX"}, // rsx
+    {0x8E09C833, "RX7"}, // rx7
+    {0xD6334437, "RX8"}, // rx8
+    {0xF44314F8, "S3"}, // s3
+    {0x80D5F2D9, "S4"}, // s4
+    {0xF0A9260B, "LANCEREVOX"}, // showdown_king
+    {0xE7ABDF48, "SILVIA"}, // silvia
+    {0xDBA80199, "SKYLINE"}, // skyline
+    {0xFB5F2DE0, "SKYLINER35"}, // skyliner35
+    {0x373DFD47, "SOLSTICEGXP"}, // solsticegxp
+    {0x66F13434, "SUPRA"}, // supra
+    {0x3AF6861B, "TTN"}, // ttn
+    {0x6EBED408, "VIPER"}, // viper
+    {0xAD54F689, "ZONDA"} // zonda
+};
+
+// Display names follow the game's own CARNAME_* strings (LANGUAGES\English_Global.bin).
 static const std::unordered_map<std::string, std::string> CAR_TRANSLATION_TABLE = {
     // Acura
-    {"INTEGRA", "Acura Integra Type R"},
-    {"RSX", "Acura RSX Type-S"},
+    {"INTEGRALS", "Acura Integra"},
+    {"INTEGRATYPER", "Acura Integra Type R"},
     {"NSX", "Acura NSX"},
+    {"RSX", "Acura RSX"},
+
+    // Aston Martin
+    {"DB9", "Aston Martin DB9"},
+    {"DBR9", "Aston Martin DBR9"},
 
     // Audi
+    {"R8PROD", "Audi R8"},
+    {"RS4", "Audi RS4"},
     {"S3", "Audi S3"},
     {"S4", "Audi S4"},
-    {"RS4", "Audi RS4"},
-    {"TT", "Audi TT 3.2 quattro"},
-    {"R8", "Audi R8"},
-    {"AUDI_R8", "Audi R8"},
-    {"AUDIR8", "Audi R8"},
+    {"TTN", "Audi TT 3.2 quattro"},
 
     // BMW
-    {"E46", "BMW M3 (E46)"},
-    {"M3E46", "BMW M3 (E46)"},
-    {"E92", "BMW M3 (E92)"},
-    {"M3E92", "BMW M3 (E92)"},
-    {"M3", "BMW M3"},
-    {"Z4", "BMW Z4 M Coupe"},
-    {"Z4M", "BMW Z4 M Coupe"},
+    {"BMWM3", "BMW M3 E46"},
+    {"BMWM3E92", "BMW M3 E92"},
+    {"BMWMZ4", "BMW Z4 M Coupe"},
+
+    // Bugatti
+    {"VEYRON", "Bugatti Veyron 16.4"},
 
     // Cadillac
-    {"CTS_V", "Cadillac CTS-V"},
     {"CTSV", "Cadillac CTS-V"},
 
     // Chevrolet
     {"CAMARO", "Chevrolet Camaro SS"},
-    {"CAMAROSS", "Chevrolet Camaro SS"},
-    {"CAMAROCONCEPT", "Chevrolet Camaro Concept"},
+    {"CAMARON", "Chevrolet Camaro Concept"},
     {"CHEVELLE", "Chevrolet Chevelle SS"},
-    {"COBALT", "Chevrolet Cobalt SS"},
     {"COBALTSS", "Chevrolet Cobalt SS"},
-    {"CORVETTE", "Chevrolet Corvette Z06"},
+    {"CORVETTE", "Chevrolet Corvette C6"},
+    {"CORVETTE67", "Chevrolet Corvette '67"},
     {"CORVETTEZ06", "Chevrolet Corvette Z06"},
-    {"CORVETTESTINGRAY", "Chevrolet Corvette Stingray (1967)"},
-    {"CORVETTE67", "Chevrolet Corvette (1967)"},
-    {"CORVETTE_67", "Chevrolet Corvette (1967)"},
-    {"CORVETTE_C6", "Chevrolet Corvette C6"},
 
     // Dodge
-    {"CHARGER", "Dodge Charger R/T"},
-    {"CHARGER69", "Dodge Charger R/T (1969)"},
-    {"CHALLENGER", "Dodge Challenger R/T"},
-    {"CHALLENGER71", "Dodge Challenger (1971)"},
+    {"CHALLENGER71", "Dodge Challenger R/T"},
+    {"CHALLENGERN", "Dodge Challenger Concept"},
+    {"CHARGER69", "Dodge Charger R/T"},
     {"VIPER", "Dodge Viper SRT10"},
-    {"VIPERSRT10", "Dodge Viper SRT10"},
-    {"VIPER_COUPE", "Dodge Viper SRT10 Coupe"},
 
     // Ford
-    {"ESCORT", "Ford Escort RS Cosworth"},
-    {"ESCORTCOSWORTH", "Ford Escort RS Cosworth"},
-    {"FOCUS", "Ford Focus ST"},
+    {"COSWORTH", "Ford Escort RS Cosworth"},
     {"FOCUSST", "Ford Focus ST"},
-    {"GT", "Ford GT"},
     {"FORDGT", "Ford GT"},
-    {"MUSTANG", "Ford Mustang GT"},
+    {"MUSTANG03", "Ford Mustang GT '03"},
     {"MUSTANGGT", "Ford Mustang GT"},
-    {"MUSTANG67", "Ford Mustang (1967)"},
-    {"MUSTANG_SHELBY", "Shelby GT500"},
 
     // Honda
-    {"CIVIC", "Honda Civic Si"},
+    {"CIVICHB", "Honda Civic"},
     {"CIVICSI", "Honda Civic Si"},
     {"S2000", "Honda S2000"},
 
     // Infiniti
-    {"G35", "Infiniti G35"},
+    {"G35", "Infiniti G35 (V35)"},
 
-    // Lamborghini & Koenigsegg & Pagani
-    {"MURCIELAGO", "Lamborghini Murciélago LP640"},
-    {"MURCIELAGOLP640", "Lamborghini Murciélago LP640"},
-    {"LP640", "Lamborghini Murciélago LP640"},
-    {"GALLARDO", "Lamborghini Gallardo Superleggera"},
-    {"GALLARDO_SUPERLEGGERA", "Lamborghini Gallardo Superleggera"},
+    // Koenigsegg
     {"CCX", "Koenigsegg CCX"},
-    {"KOENIGSEGG_CCX", "Koenigsegg CCX"},
-    {"PAGANI", "Pagani Zonda F"},
-    {"ZONDA", "Pagani Zonda F"},
-    {"ZONDAF", "Pagani Zonda F"},
+
+    // Lamborghini
+    {"GALLARDOS", "Lamborghini Gallardo Superleggera"},
+    {"MURCIELAGO640", "Lamborghini Murciélago LP640"},
+
+    // Lancia
+    {"DELTA", "Lancia Delta Integrale Evo"},
 
     // Lexus
     {"IS350", "Lexus IS350"},
 
     // Lotus
-    {"ELISE", "Lotus Elise 111R"},
+    {"ELISE", "Lotus Elise"},
 
     // Mazda
-    {"MAZDA3", "Mazdaspeed 3"},
-    {"MAZDASPEED3", "Mazdaspeed 3"},
+    {"MAZDASPEED3", "Mazda Mazdaspeed3"},
     {"RX7", "Mazda RX-7"},
     {"RX8", "Mazda RX-8"},
-    {"MIATA", "Mazda MX-5"},
-    {"MX5", "Mazda MX-5"},
 
-    // Mercedes-Benz & McLaren
-    {"SL65", "Mercedes-Benz SL 65 AMG"},
-    {"SL65AMG", "Mercedes-Benz SL 65 AMG"},
-    {"SLR", "Mercedes-Benz SLR McLaren 722"},
-    {"SLRMCLAREN", "Mercedes-Benz SLR McLaren 722"},
+    // McLaren
+    {"MCLARENF1", "McLaren F1"},
+
+    // Mercedes-Benz
+    {"SL65", "Mercedes-Benz SL65 AMG"},
 
     // Mitsubishi
-    {"ECLIPSE", "Mitsubishi Eclipse GSX"},
-    {"EVO9", "Mitsubishi Lancer Evolution IX MR"},
-    {"LANCEREVO9", "Mitsubishi Lancer Evolution IX MR"},
-    {"EVOX", "Mitsubishi Lancer Evolution X"},
+    {"ECLIPSE", "Mitsubishi Eclipse"},
+    {"LANCEREVO9", "Mitsubishi Lancer Evolution IX"},
     {"LANCEREVOX", "Mitsubishi Lancer Evolution X"},
 
     // Nissan
     {"240SX", "Nissan 240SX (S13)"},
-    {"SILVIA", "Nissan Silvia (S15)"},
-    {"S15", "Nissan Silvia (S15)"},
     {"350Z", "Nissan 350Z (Z33)"},
-    {"Z33", "Nissan 350Z (Z33)"},
+    {"GTRPROTO", "Nissan GT-R Proto"},
+    {"SILVIA", "Nissan Silvia (S15)"},
     {"SKYLINE", "Nissan Skyline GT-R (R34)"},
-    {"R34", "Nissan Skyline GT-R (R34)"},
-    {"GTR", "Nissan GT-R (R35)"},
-    {"GTR35", "Nissan GT-R (R35)"},
-    {"GTR_PROTO", "Nissan GT-R Proto"},
+    {"SKYLINER35", "Nissan GT-R (R35)"},
+
+    // Pagani
+    {"ZONDA", "Pagani Zonda F"},
 
     // Plymouth
-    {"HEMICUDA", "Plymouth Hemi Cuda"},
     {"CUDA", "Plymouth Hemi Cuda"},
     {"ROADRUNNER", "Plymouth Road Runner"},
 
     // Pontiac
     {"GTO", "Pontiac GTO"},
-    {"GTO65", "Pontiac GTO (1965)"},
-    {"GTO05", "Pontiac GTO (2005)"},
-    {"SOLSTICE", "Pontiac Solstice GXP"},
-    {"SOLSTICEST", "Pontiac Solstice GXP"},
-    {"FIREBIRD", "Pontiac Firebird"},
+    {"GTO65", "Pontiac GTO '65"},
+    {"SOLSTICEGXP", "Pontiac Solstice GXP"},
 
     // Porsche
-    {"911GT2", "Porsche 911 GT2"},
-    {"997GT2", "Porsche 911 GT2 (997)"},
-    {"911TURBO", "Porsche 911 Turbo"},
-    {"997TURBO", "Porsche 911 Turbo (997)"},
-    {"911GT3", "Porsche 911 GT3 RS"},
-    {"997GT3RS", "Porsche 911 GT3 RS (997)"},
-    {"GT3RS", "Porsche 911 GT3 RS"},
-    {"911GT3RS", "Porsche 911 GT3 RS"},
-    {"997GT3", "Porsche 911 GT3 RS"},
-    {"CAYMAN", "Porsche Cayman S"},
-    {"CAYMANS", "Porsche Cayman S"},
+    {"997GT2", "Porsche 911 GT2"},
+    {"997GT3", "Porsche 911 GT3"},
+    {"997GT3RS", "Porsche 911 GT3 RS"},
+    {"997TT", "Porsche 911 Turbo"},
     {"CARRERAGT", "Porsche Carrera GT"},
-    {"PORSCHE911", "Porsche 911"},
-    {"911", "Porsche 911"},
-    {"PORSCHE", "Porsche 911 GT2"},
+    {"CAYMANS", "Porsche Cayman S"},
+
+    // SEAT
+    {"LEONCUPRA", "SEAT Leon Cupra"},
 
     // Shelby
-    {"GT500", "Shelby GT500"},
-    {"GT500KR", "Shelby GT500KR"},
-    {"COBRA", "Shelby Cobra 427"},
-    {"COBRA427", "Shelby Cobra 427"},
-    {"DAYTONA", "Shelby Daytona Coupe"},
+    {"MUSTANGSHLBYN", "Shelby GT500"},
+    {"MUSTANGSHLBYO", "Shelby GT500 '67"},
 
     // Subaru
-    {"IMPREZA", "Subaru Impreza WRX STi"},
-    {"WRX", "Subaru Impreza WRX STi"},
-    {"WRXSTI", "Subaru Impreza WRX STi"},
+    {"IMPREZAWRXSTI", "Subaru Impreza WRX STi"},
 
     // Toyota
     {"COROLLA", "Toyota Corolla GTS (AE86)"},
-    {"AE86", "Toyota Corolla GTS (AE86)"},
-    {"MR2", "Toyota MR2"},
     {"SUPRA", "Toyota Supra"},
 
     // Volkswagen
-    {"GOLF", "Volkswagen Golf GTI"},
     {"GTI", "Volkswagen Golf GTI"},
-    {"GOLFGTI", "Volkswagen Golf GTI"},
-    {"R32", "Volkswagen Golf R32"}
+    {"R32", "Volkswagen R32"}
 };
 
-static std::string g_lastKnownValidCarKey = "";
-
-static std::string NormalizeCarKey(const std::string& rawKey) {
-    if (rawKey.length() < 2 || rawKey.length() > 64) {
-        return "";
-    }
-
-    std::string upper = rawKey;
-    std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) {
-        return std::toupper(c);
-    });
-
-    if (upper.rfind("CARS\\", 0) == 0) upper = upper.substr(5);
-    if (upper.rfind("CARS/", 0) == 0) upper = upper.substr(5);
-    if (upper.rfind("CAR_", 0) == 0) upper = upper.substr(4);
-
-    size_t slashPos = upper.find_first_of("\\/.");
-    if (slashPos != std::string::npos) {
-        upper = upper.substr(0, slashPos);
-    }
-
-    // 1. Direct match
-    auto it = CAR_TRANSLATION_TABLE.find(upper);
-    if (it != CAR_TRANSLATION_TABLE.end()) {
-        return it->first;
-    }
-
-    // 2. Prefix split before mode suffix (e.g. "911GT2_SPEED", "GTR_GRIP", "RX7_DRIFT")
-    size_t underPos = upper.find('_');
-    if (underPos != std::string::npos) {
-        std::string prefix = upper.substr(0, underPos);
-        it = CAR_TRANSLATION_TABLE.find(prefix);
-        if (it != CAR_TRANSLATION_TABLE.end()) {
-            return it->first;
-        }
-    }
-
-    return "";
-}
-
-static std::string ReadSafeString(uintptr_t strPtr, size_t maxLen = 32) {
-    if (!strPtr || IsBadReadPtr((void*)strPtr, 1)) {
-        return "";
-    }
-
-    std::string result;
-    result.reserve(16);
-    for (size_t i = 0; i < maxLen; ++i) {
-        if (IsBadReadPtr((void*)(strPtr + i), 1)) {
-            break;
-        }
-        char c = *(char*)(strPtr + i);
-        if (c == '\0') {
-            break;
-        }
-        if (isalnum((unsigned char)c) || c == '_' || c == '-' || c == '\\' || c == '/' || c == '.') {
-            result.push_back(c);
-        } else {
-            break;
-        }
-    }
-
-    return result;
-}
-
-static std::string CheckDirectOrDerefCarString(uintptr_t ptr) {
-    if (!ptr || IsBadReadPtr((void*)ptr, sizeof(uintptr_t))) {
-        return "";
-    }
-
-    // 1. Direct string check
-    std::string s1 = ReadSafeString(ptr);
-    std::string norm1 = NormalizeCarKey(s1);
-    if (!norm1.empty()) return norm1;
-
-    // 2. Dereferenced string check (+0x00)
-    uintptr_t deref0 = *(uintptr_t*)ptr;
-    if (deref0 && !IsBadReadPtr((void*)deref0, sizeof(uintptr_t))) {
-        std::string s2 = ReadSafeString(deref0);
-        std::string norm2 = NormalizeCarKey(s2);
-        if (!norm2.empty()) return norm2;
-
-        uintptr_t deref0_0 = *(uintptr_t*)deref0;
-        if (deref0_0 && !IsBadReadPtr((void*)deref0_0, sizeof(uintptr_t))) {
-            std::string s3 = ReadSafeString(deref0_0);
-            std::string norm3 = NormalizeCarKey(s3);
-            if (!norm3.empty()) return norm3;
-        }
-    }
-
-    return "";
-}
-
-static std::string ExtractCarFromPVehicle(uintptr_t pVehicle) {
-    if (!pVehicle || IsBadReadPtr((void*)pVehicle, 0x100)) {
-        return "";
-    }
-
-    // Scan pVehicle custom pointer & rideInfo
-    uintptr_t cust = *(uintptr_t*)(pVehicle + 0x04);
-    if (cust != 0 && !IsBadReadPtr((void*)cust, 0x40)) {
-        for (int off = 0; off <= 0x30; off += 4) {
-            std::string car = CheckDirectOrDerefCarString(cust + off);
-            if (!car.empty()) return car;
-        }
-
-        uintptr_t rideInfo = *(uintptr_t*)cust;
-        if (rideInfo != 0 && !IsBadReadPtr((void*)rideInfo, 0x40)) {
-            for (int off = 0; off <= 0x30; off += 4) {
-                std::string car = CheckDirectOrDerefCarString(rideInfo + off);
-                if (!car.empty()) return car;
-            }
-        }
-    }
-
-    // Scan pVehicle fields
-    for (int off = 0; off <= 0x80; off += 4) {
-        std::string car = CheckDirectOrDerefCarString(pVehicle + off);
-        if (!car.empty()) return car;
-    }
-
-    return "";
-}
+static const uint32_t INVALID_CAR_HANDLE = 0xFFFFFFFF;
+static const int FE_CAR_RECORD_COUNT = 0x19A;
+static const int FE_CAR_RECORD_SIZE = 0x18;
 
 std::string ReadRawCarIdentifier(uintptr_t baseModule) {
-    // 1. Check GRaceStatus racer 0..7 (active player vehicle in race & post-race)
-    uintptr_t gRaceStatusBase = baseModule + 0x6B9D7C;
-    if (IsBadReadPtr((void*)gRaceStatusBase, sizeof(uintptr_t)) == 0) {
-        uintptr_t gRaceStatus = *(uintptr_t*)gRaceStatusBase;
-        if (gRaceStatus != 0 && IsBadReadPtr((void*)(gRaceStatus + 0x20), 0x80) == 0) {
-            for (int i = 0; i < 8; ++i) {
-                uintptr_t racer = gRaceStatus + 0x20 + (i * 0x594);
-                if (IsBadReadPtr((void*)racer, 0x80)) break;
-
-                uintptr_t pVehicle = *(uintptr_t*)(racer + 0x0C);
-                if (pVehicle) {
-                    std::string car = ExtractCarFromPVehicle(pVehicle);
-                    if (!car.empty()) {
-                        g_lastKnownValidCarKey = car;
-                        return car;
-                    }
-                }
-
-                // Check racer direct slots
-                for (int off = 0x00; off <= 0x30; off += 4) {
-                    std::string car = CheckDirectOrDerefCarString(racer + off);
-                    if (!car.empty()) {
-                        g_lastKnownValidCarKey = car;
-                        return car;
-                    }
-                }
-            }
-        }
+    // FE::Career::FECareer (0xAB0EA8) +0x18 holds the local player's car handle (DALCareer id 0x1772).
+    uintptr_t careerBase = baseModule + 0x6B0EA8;
+    if (IsBadReadPtr((void*)careerBase, sizeof(uintptr_t))) {
+        return "";
+    }
+    uintptr_t career = *(uintptr_t*)careerBase;
+    if (career == 0 || IsBadReadPtr((void*)(career + 0x18), sizeof(uint32_t))) {
+        return "";
+    }
+    uint32_t carHandle = *(uint32_t*)(career + 0x18);
+    if (carHandle == INVALID_CAR_HANDLE) {
+        return "";
     }
 
-    // 2. Check LocalPlayer singleton (0xBFB400 -> baseModule + 0x7FB400)
-    uintptr_t activePlayerBase = baseModule + 0x7FB400;
-    if (IsBadReadPtr((void*)activePlayerBase, sizeof(uintptr_t)) == 0) {
-        uintptr_t localPlayer = *(uintptr_t*)activePlayerBase;
-        if (localPlayer != 0 && IsBadReadPtr((void*)localPlayer, 0x60) == 0) {
-            uintptr_t pVehicle = *(uintptr_t*)(localPlayer + 0x28);
-            if (pVehicle) {
-                std::string car = ExtractCarFromPVehicle(pVehicle);
-                if (!car.empty()) {
-                    g_lastKnownValidCarKey = car;
-                    return car;
-                }
-            }
-        }
+    // UserProfile (0xAB0EAC) +0x240 is the FEPlayerCarDB record table.
+    uintptr_t profileBase = baseModule + 0x6B0EAC;
+    if (IsBadReadPtr((void*)profileBase, sizeof(uintptr_t))) {
+        return "";
+    }
+    uintptr_t profile = *(uintptr_t*)profileBase;
+    if (profile == 0) {
+        return "";
+    }
+    uintptr_t records = profile + 0x240;
+    if (IsBadReadPtr((void*)records, FE_CAR_RECORD_COUNT * FE_CAR_RECORD_SIZE)) {
+        return "";
     }
 
-    // 3. Check GCar / Active Vehicle Object (baseModule + 0x6B9DB0)
-    uintptr_t gCarBase = baseModule + 0x6B9DB0;
-    if (IsBadReadPtr((void*)gCarBase, sizeof(uintptr_t)) == 0) {
-        uintptr_t gCar = *(uintptr_t*)gCarBase;
-        if (gCar != 0 && IsBadReadPtr((void*)gCar, 0x80) == 0) {
-            std::string car = ExtractCarFromPVehicle(gCar);
-            if (!car.empty()) {
-                g_lastKnownValidCarKey = car;
-                return car;
-            }
+    for (int i = 0; i < FE_CAR_RECORD_COUNT; ++i) {
+        uintptr_t record = records + (i * FE_CAR_RECORD_SIZE);
+        if (*(uint32_t*)record != carHandle) {
+            continue;
         }
+
+        uint32_t vehicleKey = *(uint32_t*)(record + 0x08);
+        auto it = VEHICLE_KEY_TO_MODEL.find(vehicleKey);
+        if (it != VEHICLE_KEY_TO_MODEL.end()) {
+            return it->second;
+        }
+
+        static uint32_t lastUnknownKey = 0;
+        if (vehicleKey != lastUnknownKey) {
+            printf("[ProStreetRPC] COULDNT FIND CAR FOR VEHICLE KEY: 0x%08X\n", vehicleKey);
+            lastUnknownKey = vehicleKey;
+        }
+        return "";
     }
 
-    // 4. Check Raceday Matchup / Selected Car screen (FeEventMatchup at 0xAB2E04)
-    uintptr_t feMatchupBase = baseModule + 0x6B2E04;
-    if (IsBadReadPtr((void*)feMatchupBase, sizeof(uintptr_t)) == 0) {
-        uintptr_t feMatchup = *(uintptr_t*)feMatchupBase;
-        if (feMatchup != 0 && IsBadReadPtr((void*)feMatchup, 0x100) == 0) {
-            for (int off = 0x0C; off <= 0x80; off += 4) {
-                std::string car = CheckDirectOrDerefCarString(*(uintptr_t*)(feMatchup + off));
-                if (!car.empty()) {
-                    g_lastKnownValidCarKey = car;
-                    return car;
-                }
-            }
-        }
-    }
-
-    return g_lastKnownValidCarKey;
+    return "";
 }
 
 std::string TranslateCarIdentifier(const std::string& rawIdentifier) {
-    std::string norm = NormalizeCarKey(rawIdentifier);
-    if (norm.empty()) {
-        norm = rawIdentifier;
-    }
-
-    auto it = CAR_TRANSLATION_TABLE.find(norm);
+    auto it = CAR_TRANSLATION_TABLE.find(rawIdentifier);
     if (it != CAR_TRANSLATION_TABLE.end()) {
         return it->second;
     }
