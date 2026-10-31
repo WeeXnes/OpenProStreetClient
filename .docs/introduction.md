@@ -1,25 +1,29 @@
-# ProStreetRPC Documentation
+# OpenProStreet Client Documentation
 
-Welcome to the **ProStreetRPC** technical documentation. This documentation covers the underlying mechanics, memory hooks, and Discord Game SDK integration inside Need for Speed: ProStreet.
+The OpenProStreet client is a 32-bit (x86) ASI plugin for Need for Speed: ProStreet, and the companion to the [OpenProStreet](https://code.weexnes.dev/OpenProStreet) server. It started as ProStreetRPC, a Discord Rich Presence plugin.
 
 ---
 
 ## Overview
 
-`ProStreetRPC` is a 32-bit (x86) ASI plugin written in C++ designed to interface NFS: ProStreet with the official **Discord Game SDK (v2.5.6)**. It injects into `nfs.exe` to read memory offsets for active race sessions, player career statistics, and map identifiers in real-time.
+It runs inside `nfs.exe`, without changing the game's files:
+
+- **Secure login:** encrypts everything the game sends to an OpenProStreet server, and logs you in with a key instead of the game's plaintext password.
+- **Race results:** reports lap times and race details to the server after each race, for records and leaderboards.
+- **Quick match:** tells the server when you pick quick match, so it can place you in a room.
+- **Windows 10 and 11 LAN fix:** lets the game's 2007 network code connect at all.
+- **Discord Rich Presence:** shows your track, race mode, car and Raceday XP.
+- **Custom PNG decals** and other tweaks.
 
 ---
 
-## Architectural Workflow
+## Startup
 
-1. **ASI Loader Hook**: When loaded into `nfs.exe`, `DllMain` intercepts `DLL_PROCESS_ATTACH`, verifies the target process name is `nfs.exe`, and initializes Discord RPC.
-2. **Discord Core Initialization**: Creates the `discord::Core` instance using application ID `656565390411038731`.
-3. **LAN Fix Hook**: Calls `LANFix::Init()` to apply memory patches required for LAN broadcast binding.
-4. **Game Memory Polling Loop**: Periodically reads game pointers for:
-   - Current race state (In Menu, Race Day, Custom Race).
-   - Track ID and mapping to human-readable string (`map.cpp`).
-   - Player cash ($) and Raceday XP.
-5. **Activity Dispatch**: Updates `discord::Activity` with formatted strings, small/large image assets, and timestamps.
+1. **ASI loader:** `DllMain` checks that the process is `nfs.exe`.
+2. **Server link (`src/net/server_link.cpp`):** loads your identity and hooks the game's socket calls.
+3. **LAN fix (`src/game/lanfix.cpp`):** patches socket creation, and tells the server link when the game connects.
+4. **Hooks:** quick match menu commands, race results, decals and tweaks.
+5. **Discord thread:** polls game memory and updates the activity.
 
 ---
 

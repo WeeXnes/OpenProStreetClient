@@ -8,7 +8,7 @@ SDK_DIR="${THIRDPARTY_DIR}/discord_game_sdk"
 SDK_ZIP_URL="https://dl-game-sdk.discordapp.net/2.5.6/discord_game_sdk.zip"
 SDK_ZIP="${THIRDPARTY_DIR}/discord_game_sdk.zip"
 
-echo "=== Need for Speed: ProStreet RPC - Linux Cross-Build Script ==="
+echo "=== OpenProStreet Client - Linux Cross-Build Script ==="
 
 # 1. Download and extract Discord Game SDK if not already done
 if [ ! -d "${SDK_DIR}" ]; then
@@ -47,22 +47,22 @@ fi
 echo "Creating ZIP bundle..."
 python3 -c "
 import zipfile, os
-lib_file = os.path.join('${SCRIPT_DIR}', 'library.cpp')
+lib_file = os.path.join('${SCRIPT_DIR}', 'src', 'main.cpp')
 if os.path.exists(lib_file):
     with open(lib_file) as f:
         for line in f:
             if 'const std::string version =' in line:
                 version = line.split('\"')[1]
                 break
-zip_name = f'build/ProStreetRPC_v{version}.zip'
+zip_name = f'build/OpenProStreetClient_v{version}.zip'
 with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
-    zipf.write('build/ProStreetRPC.asi', 'ProStreetRPC.asi')
+    zipf.write('build/OpenProStreetClient.asi', 'OpenProStreetClient.asi')
     zipf.write('build/discord_game_sdk.dll', 'discord_game_sdk.dll')
 print(f'Successfully created release bundle: {zip_name}')
 "
 
 echo "=== Build Completed Successfully! ==="
 echo "Output files are in the 'build/' directory:"
-echo "  - build/ProStreetRPC.asi"
+echo "  - build/OpenProStreetClient.asi"
 echo "  - build/discord_game_sdk.dll"
-echo "  - build/ProStreetRPC_v*.zip (Release Bundle)"
+echo "  - build/OpenProStreetClient_v*.zip (Release Bundle)"

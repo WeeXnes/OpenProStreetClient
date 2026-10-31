@@ -1,5 +1,5 @@
-#ifndef PROSTREETRPC_RACE_RESULTS_H
-#define PROSTREETRPC_RACE_RESULTS_H
+#ifndef OPENPROSTREET_RACE_RESULTS_H
+#define OPENPROSTREET_RACE_RESULTS_H
 
 #include <windows.h>
 #include <string>
@@ -30,4 +30,4 @@ namespace RaceResults
     void Init(uintptr_t baseModule);
 }
 
-#endif // PROSTREETRPC_RACE_RESULTS_H
+#endif // OPENPROSTREET_RACE_RESULTS_H

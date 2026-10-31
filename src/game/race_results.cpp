@@ -1,7 +1,9 @@
-#include "race_results.h"
-#include "map.h"
-#include "car.h"
-#include "race_mode.h"
+#include "game/race_results.h"
+#include "game/hooks.h"
+#include "net/server_link.h"
+#include "game/map.h"
+#include "game/car.h"
+#include "game/race_mode.h"
 #include <cstdio>
 #include <ctime>
 #include <fstream>
@@ -213,7 +215,7 @@ namespace RaceResults
         // 2. Locate Human Player RacerInfo in GRaceStatus
         uintptr_t playerRacer = FindLocalRacer(baseModule, gRaceStatus);
         if (!playerRacer) {
-            printf("[ProStreetRPC] Could not find the local racer, race result not saved.\n");
+            printf("[OpenProStreet] Could not find the local racer, race result not saved.\n");
             return;
         }
 
@@ -316,44 +318,59 @@ namespace RaceResults
 
         // Formatted Console Output for Online Leaderboard Proof-of-Concept
         printf("\n============================================================\n");
-        printf("[ProStreetRPC] === RACE COMPLETED ===\n");
-        printf("[ProStreetRPC] Driver:        %.31s\n", (const char*)(playerRacer + RACER_NAME));
-        printf("[ProStreetRPC] Event ID:      %s\n", res.eventId.c_str());
-        printf("[ProStreetRPC] Track:         %s\n", res.trackName.c_str());
-        printf("[ProStreetRPC] Mode:          %s\n", res.raceMode.c_str());
-        printf("[ProStreetRPC] Car:           %s\n", res.carName.c_str());
-        printf("[ProStreetRPC] Position:      %s\n", FormatPosition(res.position).c_str());
+        printf("[OpenProStreet] === RACE COMPLETED ===\n");
+        printf("[OpenProStreet] Driver:        %.31s\n", (const char*)(playerRacer + RACER_NAME));
+        printf("[OpenProStreet] Event ID:      %s\n", res.eventId.c_str());
+        printf("[OpenProStreet] Track:         %s\n", res.trackName.c_str());
+        printf("[OpenProStreet] Mode:          %s\n", res.raceMode.c_str());
+        printf("[OpenProStreet] Car:           %s\n", res.carName.c_str());
+        printf("[OpenProStreet] Position:      %s\n", FormatPosition(res.position).c_str());
 
         if (isDrag) {
             for (size_t h = 0; h < res.heatTimes.size(); ++h) {
-                printf("[ProStreetRPC] Heat %u:        %s (%.3fs)\n", (unsigned)(h + 1), FormatSecondsToTime(res.heatTimes[h]).c_str(), res.heatTimes[h]);
+                printf("[OpenProStreet] Heat %u:        %s (%.3fs)\n", (unsigned)(h + 1), FormatSecondsToTime(res.heatTimes[h]).c_str(), res.heatTimes[h]);
             }
             if (res.bestLapSeconds > 0.0f) {
-                printf("[ProStreetRPC] Best Run:      %s (%.3fs)\n", FormatSecondsToTime(res.bestLapSeconds).c_str(), res.bestLapSeconds);
+                printf("[OpenProStreet] Best Run:      %s (%.3fs)\n", FormatSecondsToTime(res.bestLapSeconds).c_str(), res.bestLapSeconds);
             }
         } else {
             if (res.totalTimeSeconds > 0.0f) {
-                printf("[ProStreetRPC] Total Time:    %s (%.3fs)\n", FormatSecondsToTime(res.totalTimeSeconds).c_str(), res.totalTimeSeconds);
+                printf("[OpenProStreet] Total Time:    %s (%.3fs)\n", FormatSecondsToTime(res.totalTimeSeconds).c_str(), res.totalTimeSeconds);
             }
             if (res.bestLapSeconds > 0.0f && res.bestLapSeconds != res.totalTimeSeconds) {
-                printf("[ProStreetRPC] Best Lap:      %s (%.3fs)\n", FormatSecondsToTime(res.bestLapSeconds).c_str(), res.bestLapSeconds);
+                printf("[OpenProStreet] Best Lap:      %s (%.3fs)\n", FormatSecondsToTime(res.bestLapSeconds).c_str(), res.bestLapSeconds);
             }
             // Print individual laps breakdown
             for (size_t l = 0; l < res.lapTimes.size(); ++l) {
-                printf("[ProStreetRPC] Lap %u:         %s (%.3fs)\n", (unsigned)(l + 1), FormatSecondsToTime(res.lapTimes[l]).c_str(), res.lapTimes[l]);
+                printf("[OpenProStreet] Lap %u:         %s (%.3fs)\n", (unsigned)(l + 1), FormatSecondsToTime(res.lapTimes[l]).c_str(), res.lapTimes[l]);
             }
         }
 
         if (res.score > 0.0f) {
-            printf("[ProStreetRPC] Score / Pts:   %.0f pts\n", res.score);
+            printf("[OpenProStreet] Score / Pts:   %.0f pts\n", res.score);
         }
         if (res.topSpeedKmh > 0.0f) {
-            printf("[ProStreetRPC] Top Speed:     %.1f km/h\n", res.topSpeedKmh);
+            printf("[OpenProStreet] Top Speed:     %.1f km/h\n", res.topSpeedKmh);
         }
         printf("============================================================\n\n");
 
         // Save JSONL record
         SaveRaceResultToJson(res);
+
+        // These are the racer's own fields, the ones the game sends the server in OLMSG_RacerFinished
+        // (GRacerInfo +0x68 onwards), so the server can check them against its own copy.
+        ServerLink::RaceReport report;
+        report.trackKey = res.trackKey;
+        report.trackName = res.trackName;
+        report.raceMode = res.raceMode;
+        report.carKey = res.carKey;
+        report.position = res.position;
+        report.raceTime = raceTimeSnapshot;
+        report.bestLap = *(float*)(playerRacer + RACER_BEST_LAP);
+        report.score = *(float*)(playerRacer + RACER_SCORE);
+        report.lapsCompleted = *(int32_t*)(playerRacer + RACER_LAPS_COMPLETED);
+        report.lapTimes = isDrag ? res.heatTimes : res.lapTimes;
+        ServerLink::SubmitRaceResult(report);
     }
 
     static void __attribute__((thiscall)) FePostRaceRewards_PopulateData_Hook(void* thisPtr, void* pParam)
@@ -444,45 +461,12 @@ namespace RaceResults
         reinterpret_cast<void(__attribute__((thiscall))*)(void*)>(g_origOnlineHandleScreenConstructed)(thisPtr);
     }
 
-    static bool InstallDetour(void* target, void* detour, void** original, size_t patchSize = 7)
-    {
-        if (!target || IsBadReadPtr(target, patchSize)) return false;
-
-        DWORD oldProtect = 0;
-        if (!VirtualProtect(target, patchSize, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
-
-        BYTE* trampoline = (BYTE*)VirtualAlloc(NULL, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-        if (!trampoline) {
-            VirtualProtect(target, patchSize, oldProtect, &oldProtect);
-            return false;
-        }
-
-        memcpy(trampoline, target, patchSize);
-
-        trampoline[patchSize] = 0xE9;
-        uintptr_t jmpBackOffset = ((uintptr_t)target + patchSize) - ((uintptr_t)trampoline + patchSize + 5);
-        memcpy(&trampoline[patchSize + 1], &jmpBackOffset, 4);
-
-        if (original) {
-            *original = (void*)trampoline;
-        }
-
-        std::vector<BYTE> jmpBuf(patchSize, 0x90);
-        jmpBuf[0] = 0xE9;
-        uintptr_t detourOffset = (uintptr_t)detour - ((uintptr_t)target + 5);
-        memcpy(&jmpBuf[1], &detourOffset, 4);
-        memcpy(target, jmpBuf.data(), patchSize);
-
-        VirtualProtect(target, patchSize, oldProtect, &oldProtect);
-        return true;
-    }
-
     void Init(uintptr_t baseModule)
     {
         if (!baseModule) return;
         g_baseModule = baseModule;
 
-        printf("[ProStreetRPC] Initializing Post-Race State Manager Hooks...\n");
+        printf("[OpenProStreet] Initializing Post-Race State Manager Hooks...\n");
 
         uintptr_t loc_5A7750 = baseModule + 0x1A7750;
         uintptr_t loc_5FA460 = baseModule + 0x1FA460;
@@ -491,28 +475,28 @@ namespace RaceResults
         uintptr_t loc_614360 = baseModule + 0x214360;
         uintptr_t loc_695DE0 = baseModule + 0x295DE0;
 
-        if (InstallDetour((void*)loc_5A7750, (void*)SinglePlayer_HandleScreenConstructed_Hook, &g_origSinglePlayerHandleScreenConstructed, 7)) {
-            printf("[ProStreetRPC] SP PostRaceStateManager hook installed at 0x%p\n", (void*)loc_5A7750);
+        if (Hooks::InstallDetour((void*)loc_5A7750, (void*)SinglePlayer_HandleScreenConstructed_Hook, &g_origSinglePlayerHandleScreenConstructed, 7)) {
+            printf("[OpenProStreet] SP PostRaceStateManager hook installed at 0x%p\n", (void*)loc_5A7750);
         }
 
-        if (InstallDetour((void*)loc_5FA460, (void*)Online_HandleScreenConstructed_Hook, &g_origOnlineHandleScreenConstructed, 7)) {
-            printf("[ProStreetRPC] Online PostRaceStateManager hook installed at 0x%p\n", (void*)loc_5FA460);
+        if (Hooks::InstallDetour((void*)loc_5FA460, (void*)Online_HandleScreenConstructed_Hook, &g_origOnlineHandleScreenConstructed, 7)) {
+            printf("[OpenProStreet] Online PostRaceStateManager hook installed at 0x%p\n", (void*)loc_5FA460);
         }
 
-        if (InstallDetour((void*)loc_5982F0, (void*)FePostRaceRewards_PopulateData_Hook, &g_origPopulateData, 7)) {
-            printf("[ProStreetRPC] FePostRaceRewards::PopulateData hook installed at 0x%p\n", (void*)loc_5982F0);
+        if (Hooks::InstallDetour((void*)loc_5982F0, (void*)FePostRaceRewards_PopulateData_Hook, &g_origPopulateData, 7)) {
+            printf("[OpenProStreet] FePostRaceRewards::PopulateData hook installed at 0x%p\n", (void*)loc_5982F0);
         }
 
-        if (InstallDetour((void*)loc_614340, (void*)SetTimeBonus_Hook, &g_origSetTimeBonus, 7)) {
-            printf("[ProStreetRPC] SetTimeBonus hook installed at 0x%p\n", (void*)loc_614340);
+        if (Hooks::InstallDetour((void*)loc_614340, (void*)SetTimeBonus_Hook, &g_origSetTimeBonus, 7)) {
+            printf("[OpenProStreet] SetTimeBonus hook installed at 0x%p\n", (void*)loc_614340);
         }
 
-        if (InstallDetour((void*)loc_614360, (void*)SetPoints_Hook, &g_origSetPoints, 7)) {
-            printf("[ProStreetRPC] SetPoints hook installed at 0x%p\n", (void*)loc_614360);
+        if (Hooks::InstallDetour((void*)loc_614360, (void*)SetPoints_Hook, &g_origSetPoints, 7)) {
+            printf("[OpenProStreet] SetPoints hook installed at 0x%p\n", (void*)loc_614360);
         }
 
-        if (InstallDetour((void*)loc_695DE0, (void*)LapChanged_Hook, &g_origLapChanged, 7)) {
-            printf("[ProStreetRPC] Lap hook installed at 0x%p\n", (void*)loc_695DE0);
+        if (Hooks::InstallDetour((void*)loc_695DE0, (void*)LapChanged_Hook, &g_origLapChanged, 7)) {
+            printf("[OpenProStreet] Lap hook installed at 0x%p\n", (void*)loc_695DE0);
         }
     }
 }

@@ -1,6 +1,6 @@
 # Architecture & Memory Maps
 
-This document details the memory structure and track mapping table used in `ProStreetRPC`.
+This document details the memory structure and track mapping table used in the OpenProStreet client.
 
 ---
 
@@ -70,6 +70,45 @@ Collection names don't always match the model: `showdown_king` is a `LANCEREVOX`
 The struct has no per-lap time array, so lap times are captured by a hook on the lap handler at `0x695DE0`. A lap count of 0 there means a new race or a restart, which clears the captured laps and the rewards values.
 
 Offsets v5.8 and earlier used wrongly: `+0x48` is inside a second 32-byte string at `+0x38`, `+0x464` and `+0x474` are 3D vectors, and `+0x8C` is an array the game takes a maximum over, not lap times.
+
+---
+
+## Server Link (`src/net`)
+
+The game's reliable connection uses `netcodeWinsockPlatUDPSocket`: `socket` and `connect` at `0x827190`, `send` at `0x8270E2`, and a blocking `recv` at `0x827110` on its own thread. `sendto` and `recvfrom` are only used for LAN discovery (`netcodeWinsockPlatUDPBcastSocket`), which stays plaintext.
+
+`ServerLink` replaces the `send`, `recv` and `closesocket` import slots at `0x96758C`, `0x967590` and `0x967584` (WS2_32 ordinals 19, 16 and 3). It does this only if all three hold the expected functions. `LANFix` tells it which socket is the data socket, and other sockets pass straight through.
+
+`SecureClient` has no Windows code, so it can be tested without the game (`tests/secure_proxy.cpp`). The protocol is described in the daemon's `src/secure/secure_gateway.h`.
+
+| File in `%LOCALAPPDATA%\\OpenProStreet` | Contents |
+| :--- | :--- |
+| `identity.key` | The player's Ed25519 secret key. Losing it means losing the account, unless the server's owner runs `openprostreetd -clearkey <name>`. |
+| `known_servers.txt` | The identity of each server seen, one per line. A server that changes identity is refused until its line is removed. |
+
+If a server never answers the handshake within 2 seconds, it's treated as an old server and the game's plaintext protocol is used, unless it's listed in `known_servers.txt`.
+
+---
+
+## Race Result Blob
+
+`OLMSG_RacerFinished` carries 0x70 bytes copied straight from `GRacerInfo +0x68` (`0x673C5A`), and `OLMSG_OfficialResults` copies them back (`0x656B00`). So the server already holds score, race time, laps, top speed and best lap for every car. The plugin adds what the server can't see: individual lap times, the track, the race mode and the finishing position.
+
+`OLMSG_PlayerCarData`'s 4-byte field is the vehicle key, the same value as `FECarRecord +0x08`, so the server knows each player's car too.
+
+---
+
+## Quick Match
+
+The game's menus run `DALOnlineMatchmakingCommands` objects. Slot 2 of each vtable does the work:
+
+| Command | Address | Plugin action |
+| :--- | :--- | :--- |
+| `StartQuickMatch` | `0x544730` | Ask the server for a quick match |
+| `StartQuickMatchFreestyle` | `0x544770` | Ask the server for a quick match |
+| `ContinueSearchQuickMatchFreestyle` | `0x5447B0` | Ask the server for a quick match |
+| `StartCustomRaceDayMultiplayerHub` | `0x5447E0` | Cancel any quick match |
+| `CancelQuickMatch` | `0x544840` | Cancel any quick match |
 
 ---
 

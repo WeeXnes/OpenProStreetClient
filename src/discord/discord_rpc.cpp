@@ -1,8 +1,8 @@
-#include "discord_rpc.h"
-#include "map.h"
-#include "car.h"
-#include "race_mode.h"
-#include "race_results.h"
+#include "discord/discord_rpc.h"
+#include "game/map.h"
+#include "game/car.h"
+#include "game/race_mode.h"
+#include "game/race_results.h"
 #include "utils.h"
 #include <cstdio>
 #include <vector>
@@ -10,19 +10,19 @@
 #include <chrono>
 
 DWORD WINAPI RpcThread(LPVOID param) {
-    printf("[ProStreetRPC] RPC thread started.\n");
+    printf("[OpenProStreet] RPC thread started.\n");
     uintptr_t baseModule = (uintptr_t)GetModuleHandle(NULL);
     if (!baseModule) {
-        printf("[ProStreetRPC] Failed to get base module.\n");
+        printf("[OpenProStreet] Failed to get base module.\n");
         return 1;
     }
-    printf("[ProStreetRPC] Base module found at: 0x%p\n", (void*)baseModule);
+    printf("[OpenProStreet] Base module found at: 0x%p\n", (void*)baseModule);
 
     discord::Activity activity{};
     activity.SetType(discord::ActivityType::Playing);
     activity.SetApplicationId(656565390411038731);
     activity.GetAssets().SetLargeImage("gcrown");
-    activity.GetAssets().SetLargeText(("ProStreetRPC v" + version + " by WeeXnes").c_str());
+    activity.GetAssets().SetLargeText(("OpenProStreet v" + version + " by WeeXnes").c_str());
     activity.GetTimestamps().SetStart(time(nullptr));
     activity.SetName("Need for Speed: ProStreet");
 
@@ -40,7 +40,7 @@ DWORD WINAPI RpcThread(LPVOID param) {
                     lastAttempt = now;
                     discord::Result res = discord::Core::Create(656565390411038731, DiscordCreateFlags_NoRequireDiscord, &discordCore);
                     if (res == discord::Result::Ok) {
-                        printf("[ProStreetRPC] Discord core connected successfully.\n");
+                        printf("[OpenProStreet] Discord core connected successfully.\n");
                     }
                 }
             }
@@ -78,9 +78,9 @@ DWORD WINAPI RpcThread(LPVOID param) {
             static std::string lastLoggedMap = "";
             if (displayMap != lastLoggedMap) {
                 if (!displayMap.empty()) {
-                    printf("[ProStreetRPC] Current map: '%s'\n", displayMap.c_str());
+                    printf("[OpenProStreet] Current map: '%s'\n", displayMap.c_str());
                 } else {
-                    printf("[ProStreetRPC] Map cleared.\n");
+                    printf("[OpenProStreet] Map cleared.\n");
                 }
                 lastLoggedMap = displayMap;
             }
@@ -93,9 +93,9 @@ DWORD WINAPI RpcThread(LPVOID param) {
             static std::string lastLoggedCar = "";
             if (displayCar != lastLoggedCar) {
                 if (!displayCar.empty()) {
-                    printf("[ProStreetRPC] Current car: '%s' (raw: '%s')\n", displayCar.c_str(), rawCar.c_str());
+                    printf("[OpenProStreet] Current car: '%s' (raw: '%s')\n", displayCar.c_str(), rawCar.c_str());
                 } else {
-                    printf("[ProStreetRPC] Car cleared.\n");
+                    printf("[OpenProStreet] Car cleared.\n");
                 }
                 lastLoggedCar = displayCar;
             }
@@ -107,9 +107,9 @@ DWORD WINAPI RpcThread(LPVOID param) {
             static std::string lastLoggedMode = "";
             if (raceMode != lastLoggedMode) {
                 if (!raceMode.empty()) {
-                    printf("[ProStreetRPC] Current race mode: '%s'\n", raceMode.c_str());
+                    printf("[OpenProStreet] Current race mode: '%s'\n", raceMode.c_str());
                 } else {
-                    printf("[ProStreetRPC] Race mode cleared.\n");
+                    printf("[OpenProStreet] Race mode cleared.\n");
                 }
                 lastLoggedMode = raceMode;
             }
@@ -136,7 +136,7 @@ DWORD WINAPI RpcThread(LPVOID param) {
                     activity.GetAssets().SetLargeText(displayMap.c_str());
                 }
             } else {
-                activity.GetAssets().SetLargeText(("ProStreetRPC v" + version + " by WeeXnes").c_str());
+                activity.GetAssets().SetLargeText(("OpenProStreet v" + version + " by WeeXnes").c_str());
             }
 
             // Build dynamic details cycle list
@@ -183,7 +183,7 @@ DWORD WINAPI RpcThread(LPVOID param) {
             }
 
         } catch (...) {
-            printf("[ProStreetRPC] Exception caught in Discord thread.\n");
+            printf("[OpenProStreet] Exception caught in Discord thread.\n");
             activity.SetState("In Menus");
             activity.SetDetails("Error reading data");
         }

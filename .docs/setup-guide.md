@@ -1,6 +1,6 @@
 # Setup & Cross-Compilation Guide
 
-Detailed instructions for building, packaging, and configuring `ProStreetRPC` on Linux and Windows.
+Detailed instructions for building, packaging, and configuring the OpenProStreet client on Linux and Windows.
 
 ---
 
@@ -27,15 +27,15 @@ What `build.sh` does under the hood:
 1. Downloads Discord Game SDK `v2.5.6` zip from official Discord CDN if not present in `thirdparty/`.
 2. Extracts C++ headers and 32-bit `discord_game_sdk.dll` into `thirdparty/discord_game_sdk`.
 3. Invokes CMake with `mingw-w64-i686.cmake`.
-4. Compiles `ProStreetRPC.asi`.
-5. Packages `ProStreetRPC.asi` and `discord_game_sdk.dll` into a versioned release ZIP under `build/`.
+4. Compiles `OpenProStreetClient.asi`.
+5. Packages `OpenProStreetClient.asi` and `discord_game_sdk.dll` into a versioned release ZIP under `build/`.
 
 ---
 
 ## 2. CI/CD Integration (OneDev)
 
 The project includes `.onedev-buildspec.yml` configured for OneDev pipelines:
-- Automatically parses version string from `library.cpp`.
+- Automatically parses version string from `src/main.cpp`.
 - Checks for tag collisions on git origin.
 - Executes cross-compilation inside a builder container.
-- Publishes artifacts to `weexnes.dev/project/ProStreetRPC#artifacts`.
+- Publishes artifacts to `weexnes.dev/project/OpenProStreetClient#artifacts`.

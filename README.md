@@ -1,21 +1,24 @@
-# ProStreetRPC
+# OpenProStreet Client
 
-> Discord Rich Presence ASI plugin for Need for Speed: ProStreet.
+> The game plugin for [OpenProStreet](https://code.weexnes.dev/OpenProStreet) servers, for Need for Speed: ProStreet. Formerly ProStreetRPC.
 
-[![Download Artifacts](https://img.shields.io/badge/Download-Artifacts-blue?style=for-the-badge&logo=package)](https://weexnes.dev/project/ProStreetRPC#artifacts)
-[![Repository](https://img.shields.io/badge/Git-Repository-orange?style=for-the-badge&logo=git)](https://code.weexnes.dev/ProStreetRPC)
+[![Download Artifacts](https://img.shields.io/badge/Download-Artifacts-blue?style=for-the-badge&logo=package)](https://weexnes.dev/project/OpenProStreetClient#artifacts)
+[![Repository](https://img.shields.io/badge/Git-Repository-orange?style=for-the-badge&logo=git)](https://code.weexnes.dev/OpenProStreetClient)
 
 ---
 
 ## 📦 Downloads & Releases
 
-Pre-compiled release bundles (`ProStreetRPC_v*.zip`) containing the ASI plugin and `discord_game_sdk.dll` can be downloaded directly from:
-👉 **[https://weexnes.dev/project/ProStreetRPC#artifacts](https://weexnes.dev/project/ProStreetRPC#artifacts)**
+Pre-compiled release bundles (`OpenProStreetClient_v*.zip`) containing the ASI plugin and `discord_game_sdk.dll` can be downloaded directly from:
+👉 **[https://weexnes.dev/project/OpenProStreetClient#artifacts](https://weexnes.dev/project/OpenProStreetClient#artifacts)**
 
 ---
 
 ## 🚀 Features
 
+- **Secure Login**: Encrypts all traffic to an OpenProStreet server and logs you in with a key stored on your PC, instead of the game's plaintext password. Older servers still work, without encryption.
+- **Race Results**: Sends your lap times, track, race mode and position to the server after each race, for records and leaderboards.
+- **Quick Match**: The game's quick match places you in the fullest open room on the server.
 - **Dynamic Status**: Displays whether you are in a race day, navigating menus, or in career.
 - **Player Car Display**: Detects the car currently driven by the player and translates internal models to real vehicle names (e.g. "Nissan GT-R (R35)", "Mazda RX-7", "Chevrolet Corvette Z06", "Toyota Supra").
 - **Race Mode & Event Type**: Identifies specific race types (e.g. "Grip", "Drift", "1/4 Mile Drag", "Wheelie Competition", "Speed Challenge", "Top Speed Run", "Sector Shootout", "Time Attack", "Grip Class").
@@ -38,15 +41,22 @@ This plugin was developed for the **v1.1 (Europe) "Battery 1.1 nocdfix"** execut
 
 ## 🛠️ Installation
 
-1. Download the latest release from [weexnes.dev Artifacts](https://weexnes.dev/project/ProStreetRPC#artifacts).
+1. Download the latest release from [weexnes.dev Artifacts](https://weexnes.dev/project/OpenProStreetClient#artifacts).
 2. Extract the archive contents:
-   - Place `ProStreetRPC.asi` into your NFS ProStreet `scripts/` directory (`<prostreet-root>/scripts/ProStreetRPC.asi`).
+   - Place `OpenProStreetClient.asi` into your NFS ProStreet `scripts/` directory (`<prostreet-root>/scripts/OpenProStreetClient.asi`).
    - Place `discord_game_sdk.dll` into your main NFS ProStreet root directory (where `nfs.exe` is located).
-3. Ensure Discord is running and launch NFS ProStreet!
+3. **If you're upgrading from ProStreetRPC, delete `scripts/ProStreetRPC.asi`.** Running both would hook the game twice.
+4. Ensure Discord is running and launch NFS ProStreet!
+
+### Your identity
+
+The first time the game starts, the plugin creates `%LOCALAPPDATA%\OpenProStreet\identity.key`. This file is what logs you in to your account, so back it up, and never share it. To play from another PC, copy it there.
 
 ---
 
 ## 💻 Building from Source
+
+The Monocypher encryption library is included in `vendor/`.
 
 ### Option A: Linux Cross-Compilation (Recommended)
 ```bash
@@ -57,6 +67,8 @@ sudo pacman -S mingw-w64-gcc cmake make curl unzip
 bash build.sh
 ```
 Output binaries and release zip will be placed in `build/`.
+
+To test the encryption code against a server without the game, build `tests/` and run `secure_proxy`, then point OpenProStreet's `tests/race_test.js` at it with `PROXY_PORT`.
 
 ### Option B: Windows Native Build (Visual Studio & vcpkg)
 ```cmd
@@ -69,5 +81,5 @@ cmake --build build --config Release
 
 ## 📜 License & Repository
 
-- **Repository**: [https://code.weexnes.dev/ProStreetRPC](https://code.weexnes.dev/ProStreetRPC)
+- **Repository**: [https://code.weexnes.dev/OpenProStreetClient](https://code.weexnes.dev/OpenProStreetClient)
 - **Part of the Need for Speed: ProStreet Modding Ecosystem**

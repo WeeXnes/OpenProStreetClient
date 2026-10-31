@@ -1,4 +1,4 @@
-#include "decals.h"
+#include "game/decals.h"
 #include <cstdio>
 #include <vector>
 #include <string>
@@ -8,7 +8,7 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_STDIO
-#include "stb_image.h"
+#include "stb/stb_image.h"
 
 namespace Decals
 {
@@ -136,7 +136,7 @@ namespace Decals
 
                     g_customDecals.push_back(decal);
 
-                    printf("[ProStreetRPC] Custom Decal Loaded: '%s' (%dx%d, Hash: 0x%08X)\n", decal.displayName.c_str(), width, height, decal.hash);
+                    printf("[OpenProStreet] Custom Decal Loaded: '%s' (%dx%d, Hash: 0x%08X)\n", decal.displayName.c_str(), width, height, decal.hash);
                 }
             }
         } while (FindNextFileA(hFind, &findData));
@@ -157,7 +157,7 @@ namespace Decals
         LoadDecalsFromDir("scripts\\decals");
         LoadDecalsFromDir("decals");
 
-        printf("[ProStreetRPC] Total custom PNG decal(s) registered: %u\n", (unsigned)g_customDecals.size());
+        printf("[OpenProStreet] Total custom PNG decal(s) registered: %u\n", (unsigned)g_customDecals.size());
     }
 
     const std::vector<CustomDecal>& GetCustomDecals()
@@ -211,7 +211,7 @@ namespace Decals
             }
             g_eaTextures[index].pD3DTexture = pTex;
             decal.d3dTexture = pTex;
-            printf("[ProStreetRPC] D3D9 Texture generated for decal '%s' (0x%08X)\n", decal.displayName.c_str(), decal.hash);
+            printf("[OpenProStreet] D3D9 Texture generated for decal '%s' (0x%08X)\n", decal.displayName.c_str(), decal.hash);
         }
     }
 
@@ -250,7 +250,7 @@ namespace Decals
                         hashes[count + i] = g_customDecals[i].hash;
                     }
                     *pCount = count + (uint32_t)g_customDecals.size();
-                    printf("[ProStreetRPC] Injected %u custom decal(s) into Decal Slot %u (New total: %u)\n",
+                    printf("[OpenProStreet] Injected %u custom decal(s) into Decal Slot %u (New total: %u)\n",
                            (unsigned)g_customDecals.size(), (unsigned)slotType, *pCount);
                 }
             }
@@ -297,19 +297,19 @@ namespace Decals
         if (!baseModule) return;
         g_baseModule = baseModule;
 
-        printf("[ProStreetRPC] Initializing Custom PNG Decals Subsystem...\n");
+        printf("[OpenProStreet] Initializing Custom PNG Decals Subsystem...\n");
         ReloadDecals();
 
         // Hook TexturePack::FindTexture at 0x004614B0 (exact 6 bytes)
         uintptr_t loc_4614B0 = baseModule + 0x614B0;
         if (InstallDetour((void*)loc_4614B0, (void*)TexturePack_FindTexture_Hook, &g_origFindTexture, 6)) {
-            printf("[ProStreetRPC] TexturePack::FindTexture hook installed at 0x%p\n", (void*)loc_4614B0);
+            printf("[OpenProStreet] TexturePack::FindTexture hook installed at 0x%p\n", (void*)loc_4614B0);
         }
 
         // Hook DALCarCustomization::GetPartsList at 0x00533410 (exact 6 bytes)
         uintptr_t loc_533410 = baseModule + 0x133410;
         if (InstallDetour((void*)loc_533410, (void*)DAL_GetCustomizationPartsList_Hook, &g_origGetCustomizationPartsList, 6)) {
-            printf("[ProStreetRPC] DAL::GetCustomizationPartsList hook installed at 0x%p\n", (void*)loc_533410);
+            printf("[OpenProStreet] DAL::GetCustomizationPartsList hook installed at 0x%p\n", (void*)loc_533410);
         }
     }
 }

@@ -1,10 +1,10 @@
-#include "tweaks.h"
+#include "game/tweaks.h"
 #include <cstdio>
 #include <cstring>
 
 namespace Tweaks
 {
-    static const char* g_customCopyrightString = "© 2007 Electronic Arts Inc. All rights reserved.^ProStreetRPC v6.0 by WeeXnes";
+    static const char* g_customCopyrightString = "© 2007 Electronic Arts Inc. All rights reserved.^OpenProStreet v7.0 by WeeXnes";
     static uintptr_t g_loc_595859 = 0;
 
     static void PatchMemory(uintptr_t address, const void* data, size_t size)
@@ -62,7 +62,7 @@ namespace Tweaks
             *(uint8_t*)loc_595854 = 0xE9; // JMP rel32
             *(int32_t*)(loc_595854 + 1) = (int32_t)((uintptr_t)StringReplacementCodeCave - (loc_595854 + 5));
             VirtualProtect((void*)loc_595854, 5, oldProtect, &oldProtect);
-            printf("[ProStreetRPC] Copyright string hook installed at 0x%p\n", (void*)loc_595854);
+            printf("[OpenProStreet] Copyright string hook installed at 0x%p\n", (void*)loc_595854);
         }
     }
 
@@ -93,13 +93,13 @@ namespace Tweaks
         PatchNOP(baseModule + 0x3CE668, 2);
         PatchByte(baseModule + 0x3CE678, 0xEB);
 
-        printf("[ProStreetRPC] Special vinyls & premade liveries unlocked successfully.\n");
+        printf("[OpenProStreet] Special vinyls & premade liveries unlocked successfully.\n");
     }
 
     void Init(uintptr_t baseModule)
     {
         if (!baseModule) return;
-        printf("[ProStreetRPC] Initializing Extra Tweaks...\n");
+        printf("[OpenProStreet] Initializing Extra Tweaks...\n");
         UnlockSpecialLiveries(baseModule);
         InstallCopyrightStringHook(baseModule);
     }

@@ -1,4 +1,4 @@
-#include "race_mode.h"
+#include "game/race_mode.h"
 
 // Maps the internal event/race mode ID from eventData + 0x23 to a human-readable name
 // using the exact game engine classifier table from 0x00657E10

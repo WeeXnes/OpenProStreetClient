@@ -1,5 +1,5 @@
-#ifndef PROSTREETRPC_RACE_MODE_H
-#define PROSTREETRPC_RACE_MODE_H
+#ifndef OPENPROSTREET_RACE_MODE_H
+#define OPENPROSTREET_RACE_MODE_H
 
 #include <windows.h>
 #include <string>
@@ -11,4 +11,4 @@ bool IsRaceActive(uintptr_t baseModule);
 // Reads and translates the race / event mode, or the last one seen once the race has ended
 std::string ReadRaceMode(uintptr_t baseModule);
 
-#endif // PROSTREETRPC_RACE_MODE_H
+#endif // OPENPROSTREET_RACE_MODE_H

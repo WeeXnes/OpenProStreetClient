@@ -1,5 +1,5 @@
-#include "car.h"
-#include "race_mode.h"
+#include "game/car.h"
+#include "game/race_mode.h"
 #include <unordered_map>
 #include <cstdio>
 
@@ -315,7 +315,7 @@ std::string ReadRawCarIdentifier(uintptr_t baseModule) {
 
         static uint32_t lastUnknownKey = 0;
         if (vehicleKey != lastUnknownKey) {
-            printf("[ProStreetRPC] COULDNT FIND CAR FOR VEHICLE KEY: 0x%08X\n", vehicleKey);
+            printf("[OpenProStreet] COULDNT FIND CAR FOR VEHICLE KEY: 0x%08X\n", vehicleKey);
             lastUnknownKey = vehicleKey;
         }
         return "";

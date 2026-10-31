@@ -1,5 +1,5 @@
-#ifndef PROSTREETRPC_CAR_H
-#define PROSTREETRPC_CAR_H
+#ifndef OPENPROSTREET_CAR_H
+#define OPENPROSTREET_CAR_H
 
 #include <windows.h>
 #include <string>
@@ -14,4 +14,4 @@ bool IsCurrentCarConfirmed(uintptr_t baseModule);
 // Translates an internal car model name (e.g. "SKYLINER35", "RX7", "CIVICSI") into a human-readable display name
 std::string TranslateCarIdentifier(const std::string& rawIdentifier);
 
-#endif // PROSTREETRPC_CAR_H
+#endif // OPENPROSTREET_CAR_H

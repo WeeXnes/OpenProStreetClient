@@ -1,4 +1,4 @@
-#include "map.h"
+#include "game/map.h"
 #include <unordered_map>
 #include <cstdio>
 
@@ -47,7 +47,7 @@ std::string TranslateMapIdentifier(const std::string& rawIdentifier) {
 
     static std::string lastMissingId = "";
     if (rawIdentifier != lastMissingId) {
-        printf("[ProStreetRPC] COULDNT FIND TRANSLATION FOR ID: %s\n", rawIdentifier.c_str());
+        printf("[OpenProStreet] COULDNT FIND TRANSLATION FOR ID: %s\n", rawIdentifier.c_str());
         lastMissingId = rawIdentifier;
     }
 

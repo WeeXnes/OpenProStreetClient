@@ -1,9 +1,10 @@
-#include "library.h"
-#include "discord_rpc.h"
-#include "lanfix.h"
-#include "race_results.h"
-#include "tweaks.h"
-#include "decals.h"
+#include "discord/discord_rpc.h"
+#include "game/lanfix.h"
+#include "game/race_results.h"
+#include "game/tweaks.h"
+#include "game/decals.h"
+#include "game/quick_match.h"
+#include "net/server_link.h"
 #include <cstdio>
 #include <discord.h>
 #include <string>
@@ -11,37 +12,39 @@
 
 discord::Core *discordCore = nullptr;
 
-const std::string version = "6.0";
+const std::string version = "7.0";
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
                       LPVOID lpReserved) {
   if (ul_reason_for_call == DLL_PROCESS_ATTACH) {
-    printf("[ProStreetRPC] ASI attached. "
-           "(https://code.weexnes.dev/ProStreetRPC)\n");
+    printf("[OpenProStreet] ASI attached. "
+           "(https://code.weexnes.dev/OpenProStreetClient)\n");
     char procname[MAX_PATH];
     GetModuleFileNameA(NULL, procname, MAX_PATH);
     if (strstr(procname, "nfs.exe") == NULL) {
-      printf("[ProStreetRPC] Not nfs.exe, exiting.\n");
+      printf("[OpenProStreet] Not nfs.exe, exiting.\n");
       return TRUE;
     }
 
-    printf("[ProStreetRPC] nfs.exe detected.\n");
+    printf("[OpenProStreet] nfs.exe detected.\n");
 
     DisableThreadLibraryCalls(hModule);
 
     uintptr_t baseModule = (uintptr_t)GetModuleHandle(NULL);
 
+    ServerLink::Init(baseModule);
     LANFix::Init();
+    QuickMatch::Init(baseModule);
     Tweaks::Init(baseModule);
     Decals::Init(baseModule);
     RaceResults::Init(baseModule);
 
     HANDLE hThread = CreateThread(NULL, 0, RpcThread, NULL, 0, NULL);
     if (hThread) {
-      printf("[ProStreetRPC] RPC thread created successfully.\n");
+      printf("[OpenProStreet] RPC thread created successfully.\n");
       CloseHandle(hThread);
     } else {
-      printf("[ProStreetRPC] Failed to create RPC thread.\n");
+      printf("[OpenProStreet] Failed to create RPC thread.\n");
     }
   }
 

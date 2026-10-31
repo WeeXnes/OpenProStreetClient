@@ -1,5 +1,5 @@
-#ifndef PROSTREETRPC_DECALS_H
-#define PROSTREETRPC_DECALS_H
+#ifndef OPENPROSTREET_DECALS_H
+#define OPENPROSTREET_DECALS_H
 
 #include <windows.h>
 #include <string>
@@ -25,4 +25,4 @@ namespace Decals
     const std::vector<CustomDecal>& GetCustomDecals();
 }
 
-#endif // PROSTREETRPC_DECALS_H
+#endif // OPENPROSTREET_DECALS_H

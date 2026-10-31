@@ -1,5 +1,5 @@
-#ifndef PROSTREETRPC_TWEAKS_H
-#define PROSTREETRPC_TWEAKS_H
+#ifndef OPENPROSTREET_TWEAKS_H
+#define OPENPROSTREET_TWEAKS_H
 
 #include <windows.h>
 #include <cstdint>
@@ -10,4 +10,4 @@ namespace Tweaks
     void Init(uintptr_t baseModule);
 }
 
-#endif // PROSTREETRPC_TWEAKS_H
+#endif // OPENPROSTREET_TWEAKS_H

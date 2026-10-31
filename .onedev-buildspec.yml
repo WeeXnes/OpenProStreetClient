@@ -16,8 +16,8 @@ jobs:
     interpreter:
       type: DefaultInterpreter
       commands: |
-        echo "Extracting version from library.cpp..."
-        grep -oP 'const std::string version = "\K[^"]+' library.cpp > version.txt || echo "1.0" > version.txt
+        echo "Extracting version from src/main.cpp..."
+        grep -oP 'const std::string version = "\K[^"]+' src/main.cpp > version.txt || echo "1.0" > version.txt
         echo "Version extracted: $(cat version.txt)"
     useTTY: true
     condition: SUCCESSFUL
@@ -90,9 +90,9 @@ jobs:
         chmod +x ./build.sh
         ./build.sh
         mkdir -p ./release
-        cp build/ProStreetRPC.asi ./release/
+        cp build/OpenProStreetClient.asi ./release/
         cp build/discord_game_sdk.dll ./release/
-        cp build/ProStreetRPC_v*.zip ./release/
+        cp build/OpenProStreetClient_v*.zip ./release/
     useTTY: true
     condition: ALWAYS
     optional: false
@@ -109,3 +109,38 @@ jobs:
   maxRetries: 3
   retryDelay: 30
   timeout: 14400
+- name: Verify
+  steps:
+  - type: CheckoutStep
+    name: checkout code
+    cloneCredential:
+      type: DefaultCredential
+    withLfs: false
+    withSubmodules: false
+    condition: SUCCESSFUL
+    optional: false
+  - type: CommandStep
+    name: Cross-Compile Windows x86 ASI Plugin
+    runInContainer: false
+    interpreter:
+      type: DefaultInterpreter
+      commands: |
+        set -e
+        chmod +x ./build.sh
+        ./build.sh
+        mkdir -p ./verify
+        cp build/OpenProStreetClient.asi build/discord_game_sdk.dll ./verify/
+    useTTY: true
+    condition: SUCCESSFUL
+    optional: false
+  - type: PublishArtifactStep
+    name: keep the test build
+    sourcePath: verify
+    artifacts: '**'
+    condition: SUCCESSFUL
+    optional: false
+  jobExecutor: Builder
+  retryCondition: never
+  maxRetries: 3
+  retryDelay: 30
+  timeout: 3600
