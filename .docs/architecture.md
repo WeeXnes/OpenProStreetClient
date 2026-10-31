@@ -13,6 +13,8 @@ This document details the memory structure and track mapping table used in `ProS
 
 ## Track & Map Identification (`map.cpp`)
 
+The track name comes from `[0xB309C0]`, which is `MassiveAds` (the in-game ad system), at `+0x05`. It is set while an event loads, about 35 seconds before the race started in a recorded session, and it stays set afterwards. Discord therefore shows the track and race mode only while `IsRaceActive` is true (`[0xAB9D7C] + 0x2D04`, the race object, is non-null). Race results still read the name after the race. `[0xB309B4]` is a console text buffer that held PunkBuster log lines; it is not a track source.
+
 Internal map identifiers in `nfs.exe` are mapped to human-readable names:
 
 | Internal Identifier | Display Name |
@@ -36,6 +38,8 @@ The car is read from the same data the game uses, not by scanning memory for str
 1. **Car handle**: `[0xAB0EA8]` is `FE::Career::FECareer`, and `+0x18` is the local player's car handle (`DALCareer` id `0x1772`). It is `0xFFFFFFFF` when no car is set. `GHub.UpdateCars` reads this handle and passes it to `GProStreetGame` (`[0xAB9DC4]`). Career, hub and LAN car selection all write it (`FELanCarSelectStateManager` through `0x7D6F90`).
 2. **Car record**: `[0xAB0EAC]` is `UserProfile`, and `+0x240` is `FEPlayerCarDB`, a table of `0x19A` records of `0x18` bytes. Match the handle at record `+0x00`. Record `+0x08` is the vehicle key, the value `DALVehicleCommands::GetPVehicleKey` returns.
 3. **Model**: the vehicle key is `Attrib::StringHash32` (Bob Jenkins lookup2, init `0xABCDEF00`) of the lowercase `pvehicle` collection name, such as `rx8` or `dlcbp_veyron`. `VEHICLE_KEY_TO_MODEL` maps it to the `CarTypeInfo` model name, and `CAR_TRANSLATION_TABLE` maps that to a display name from the game's `CARNAME_*` strings.
+
+The car handle is loaded straight from the save file, so at the main menu it can be a car from an earlier session. `IsCurrentCarConfirmed` hides the car until a race is active, the handle changes, or the handle appears in the career car table (`FECareer +0x20`, filled when an event starts). The first car can therefore stay hidden in the menus until one of those happens. Race results read the handle directly.
 
 Collection names don't always match the model: `showdown_king` is a `LANCEREVOX`, and `gtrproto2` is a `SKYLINER35`. A key that isn't in the table is logged and no car is shown, and nothing is cached, so the status can't go stale.
 

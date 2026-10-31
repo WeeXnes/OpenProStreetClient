@@ -68,8 +68,10 @@ DWORD WINAPI RpcThread(LPVOID param) {
                 }
             }
 
+            bool raceActive = IsRaceActive(baseModule);
+
             // Read Map
-            std::string rawMap = ReadRawMapIdentifier(baseModule);
+            std::string rawMap = raceActive ? ReadRawMapIdentifier(baseModule) : "";
             std::string displayMap = TranslateMapIdentifier(rawMap);
             bool hasMap = !displayMap.empty();
 
@@ -84,7 +86,7 @@ DWORD WINAPI RpcThread(LPVOID param) {
             }
 
             // Read Car
-            std::string rawCar = ReadRawCarIdentifier(baseModule);
+            std::string rawCar = IsCurrentCarConfirmed(baseModule) ? ReadRawCarIdentifier(baseModule) : "";
             std::string displayCar = TranslateCarIdentifier(rawCar);
             bool hasCar = !displayCar.empty();
 
@@ -99,7 +101,7 @@ DWORD WINAPI RpcThread(LPVOID param) {
             }
 
             // Read Race Mode
-            std::string raceMode = ReadRaceMode(baseModule);
+            std::string raceMode = raceActive ? ReadRaceMode(baseModule) : "";
             bool hasRaceMode = !raceMode.empty();
 
             static std::string lastLoggedMode = "";

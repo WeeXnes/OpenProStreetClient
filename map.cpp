@@ -106,43 +106,15 @@ std::string ReadStringFromMemory(uintptr_t strPtr, size_t maxLen = 64) {
 }
 
 std::string ReadRawMapIdentifier(uintptr_t baseModule) {
-    uintptr_t primaryBase = baseModule + 0x7309C0;
-    if (IsBadReadPtr((void*)primaryBase, sizeof(uintptr_t)) == 0) {
-        uintptr_t ptr1 = *(uintptr_t*)primaryBase;
-        if (ptr1 != 0) {
-            std::string rawStr = ReadStringFromMemory(ptr1 + 0x4);
-            if (!rawStr.empty()) {
-                return rawStr;
-            }
-
-            if (IsBadReadPtr((void*)(ptr1 + 0x4), sizeof(uintptr_t)) == 0) {
-                uintptr_t strPtr = *(uintptr_t*)(ptr1 + 0x4);
-                rawStr = ReadStringFromMemory(strPtr);
-                if (!rawStr.empty()) {
-                    return rawStr;
-                }
-            }
-        }
+    // MassiveAds (0xB309C0) +0x05 holds the loaded event's track name. It is set while an event is
+    // loading and stays set afterwards, so it only means "current track" during or just after a race.
+    uintptr_t adsBase = baseModule + 0x7309C0;
+    if (IsBadReadPtr((void*)adsBase, sizeof(uintptr_t))) {
+        return "";
     }
-
-    uintptr_t secondaryBase = baseModule + 0x7309B4;
-    if (IsBadReadPtr((void*)secondaryBase, sizeof(uintptr_t)) == 0) {
-        uintptr_t ptr2 = *(uintptr_t*)secondaryBase;
-        if (ptr2 != 0) {
-            std::string rawStr = ReadStringFromMemory(ptr2 + 0x54);
-            if (!rawStr.empty()) {
-                return rawStr;
-            }
-
-            if (IsBadReadPtr((void*)(ptr2 + 0x54), sizeof(uintptr_t)) == 0) {
-                uintptr_t strPtr = *(uintptr_t*)(ptr2 + 0x54);
-                rawStr = ReadStringFromMemory(strPtr);
-                if (!rawStr.empty()) {
-                    return rawStr;
-                }
-            }
-        }
+    uintptr_t ads = *(uintptr_t*)adsBase;
+    if (ads == 0) {
+        return "";
     }
-
-    return "";
+    return ReadStringFromMemory(ads + 0x4);
 }

@@ -1,4 +1,5 @@
 #include "car.h"
+#include "race_mode.h"
 #include <unordered_map>
 #include <cstdio>
 
@@ -229,6 +230,47 @@ static const std::unordered_map<std::string, std::string> CAR_TRANSLATION_TABLE 
 static const uint32_t INVALID_CAR_HANDLE = 0xFFFFFFFF;
 static const int FE_CAR_RECORD_COUNT = 0x19A;
 static const int FE_CAR_RECORD_SIZE = 0x18;
+
+bool IsCurrentCarConfirmed(uintptr_t baseModule) {
+    static uint32_t savedHandle = INVALID_CAR_HANDLE;
+    static bool confirmed = false;
+
+    uintptr_t careerBase = baseModule + 0x6B0EA8;
+    if (IsBadReadPtr((void*)careerBase, sizeof(uintptr_t))) {
+        return false;
+    }
+    uintptr_t career = *(uintptr_t*)careerBase;
+    if (career == 0 || IsBadReadPtr((void*)career, 0x1D8)) {
+        return false;
+    }
+
+    uint32_t carHandle = *(uint32_t*)(career + 0x18);
+    if (carHandle == INVALID_CAR_HANDLE) {
+        savedHandle = INVALID_CAR_HANDLE;
+        confirmed = false;
+        return false;
+    }
+
+    // The slot starts out as whatever the save file stored, which can be a car from an earlier
+    // session. It is only known to be current once a race uses it, the game changes it, or the
+    // game's career car table (+0x20, filled when an event starts) lists it.
+    if (savedHandle == INVALID_CAR_HANDLE) {
+        savedHandle = carHandle;
+    }
+    if (confirmed || carHandle != savedHandle || IsRaceActive(baseModule)) {
+        confirmed = true;
+        return true;
+    }
+
+    for (uintptr_t off = 0x20; off < 0x1D8; off += sizeof(uint32_t)) {
+        if (*(uint32_t*)(career + off) == carHandle) {
+            confirmed = true;
+            return true;
+        }
+    }
+
+    return false;
+}
 
 std::string ReadRawCarIdentifier(uintptr_t baseModule) {
     // FE::Career::FECareer (0xAB0EA8) +0x18 holds the local player's car handle (DALCareer id 0x1772).
