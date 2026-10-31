@@ -35,6 +35,8 @@ namespace ServerLink
 
     // The player picked quick match in the game's menus, so the server should match them. This
     // happens before the game connects, so it's sent as soon as the connection starts.
-    void RequestQuickMatch(bool ranked);
+    // location, difficulty and events ("key:laps:heats,...") are the race day to create if no room
+    // is open. events can be empty.
+    void RequestQuickMatch(bool ranked, const std::string& location, int difficulty, const std::string& events);
     void CancelQuickMatch();
 }

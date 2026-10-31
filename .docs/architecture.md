@@ -110,6 +110,18 @@ If a server never answers the handshake within 2 seconds, it's treated as an old
 
 The EA login uses a different backend (`Fesl`, Theater), whose servers are gone. So the plugin changes options `0x25` and `0x26` to `0x1F`, which opens the LAN flow, and tells the server this player wants a match.
 
+The same menu click also picks a race day, in case no room is open. `ListEvents` walks the career's race days, the data behind the "create race day" menus (`0x56C2E0`, `0x578EB0`), and groups each usable event by location. It then picks a random location, a difficulty from 1 to 4, and 1 to 4 events at that location. The server builds the race day from that:
+
+| Hub field | Value | Source |
+| :--- | :--- | :--- |
+| Header +0 | Location key | Event +0x30 (`0x6828F0`) |
+| Header +8 | Difficulty, 1 to 4 | `RACE_DAY_DIFFICULTY_%d` (`0x57023F`) |
+| Event +0 | Event key | Career race day (`0x659AF0`) |
+| Event +8 | Laps | Event +0x22 (`0x657CF0`) or a choice up to that |
+| Event +0xC | Heats | Event +0x24 (`0x657C90`) |
+
+Modes `0x13` to `0x15` are left out at difficulty 1 and 2, and mode 8 always, as the menus do (`0x579164`).
+
 When the lobby's game list arrives (`0x7E15C0`), the plugin calls the lobby's join function (`0x7D2620`). The list's first entry is selected, and during a quick match the server only lists rooms the player can join, best first. With an empty list the lobby stays open, so the player can create a race day.
 
 The player still goes through the LAN address and login screens.

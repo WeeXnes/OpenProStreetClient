@@ -43,7 +43,7 @@ namespace ServerLink
     static bool g_hasIdentity = false;
     static int g_nextTransaction = 1;
     static bool g_quickMatchPending = false;
-    static bool g_quickMatchRanked = false;
+    static std::vector<std::pair<std::string, std::string> > g_quickMatchParams;
 
     class Lock {
     public:
@@ -285,11 +285,7 @@ namespace ServerLink
         std::vector<std::pair<std::string, std::string> > params;
         params.push_back(std::make_pair(std::string("version"), version));
         SendCommand("client", "hello", params);
-        if (g_quickMatchPending) {
-            std::vector<std::pair<std::string, std::string> > quickParams;
-            quickParams.push_back(std::make_pair(std::string("ranked"), std::string(g_quickMatchRanked ? "1" : "0")));
-            SendCommand("matchmaking", "quickMatch", quickParams);
-        }
+        if (g_quickMatchPending) SendCommand("matchmaking", "quickMatch", g_quickMatchParams);
         printf("[OpenProStreet] Connecting to %s\n", address);
     }
 
@@ -332,14 +328,18 @@ namespace ServerLink
         }
     }
 
-    void RequestQuickMatch(bool ranked) {
+    void RequestQuickMatch(bool ranked, const std::string& location, int difficulty, const std::string& events) {
         if (!g_hasIdentity) return;
         Lock lock;
         g_quickMatchPending = true;
-        g_quickMatchRanked = ranked;
-        std::vector<std::pair<std::string, std::string> > params;
-        params.push_back(std::make_pair(std::string("ranked"), std::string(ranked ? "1" : "0")));
-        SendCommand("matchmaking", "quickMatch", params);
+        g_quickMatchParams.clear();
+        g_quickMatchParams.push_back(std::make_pair(std::string("ranked"), std::string(ranked ? "1" : "0")));
+        if (!events.empty()) {
+            g_quickMatchParams.push_back(std::make_pair(std::string("location"), location));
+            g_quickMatchParams.push_back(std::make_pair(std::string("difficulty"), std::to_string(difficulty)));
+            g_quickMatchParams.push_back(std::make_pair(std::string("events"), events));
+        }
+        SendCommand("matchmaking", "quickMatch", g_quickMatchParams);
     }
 
     void CancelQuickMatch() {
