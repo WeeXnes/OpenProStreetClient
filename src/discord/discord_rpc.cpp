@@ -4,19 +4,20 @@
 #include "game/race_mode.h"
 #include "game/race_results.h"
 #include "utils.h"
+#include "log.h"
 #include <cstdio>
 #include <vector>
 #include <thread>
 #include <chrono>
 
 DWORD WINAPI RpcThread(LPVOID param) {
-    printf("[OpenProStreet] RPC thread started.\n");
+    Log::Debug("[OpenProStreet] RPC thread started.\n");
     uintptr_t baseModule = (uintptr_t)GetModuleHandle(NULL);
     if (!baseModule) {
-        printf("[OpenProStreet] Failed to get base module.\n");
+        Log::Error("Failed to get base module.\n");
         return 1;
     }
-    printf("[OpenProStreet] Base module found at: 0x%p\n", (void*)baseModule);
+    Log::Debug("[OpenProStreet] Base module found at: 0x%p\n", (void*)baseModule);
 
     discord::Activity activity{};
     activity.SetType(discord::ActivityType::Playing);
@@ -40,7 +41,7 @@ DWORD WINAPI RpcThread(LPVOID param) {
                     lastAttempt = now;
                     discord::Result res = discord::Core::Create(656565390411038731, DiscordCreateFlags_NoRequireDiscord, &discordCore);
                     if (res == discord::Result::Ok) {
-                        printf("[OpenProStreet] Discord core connected successfully.\n");
+                        Log::Event(Log::Tag::Discord, "Discord core connected successfully.\n");
                     }
                 }
             }
@@ -78,9 +79,10 @@ DWORD WINAPI RpcThread(LPVOID param) {
             static std::string lastLoggedMap = "";
             if (displayMap != lastLoggedMap) {
                 if (!displayMap.empty()) {
-                    printf("[OpenProStreet] Current map: '%s'\n", displayMap.c_str());
+                    Log::Debug("[OpenProStreet] Current map: '%s'\n", displayMap.c_str());
+                    Log::Summary(Log::Tag::Game, "track: %s\n", Log::Highlight(displayMap).c_str());
                 } else {
-                    printf("[OpenProStreet] Map cleared.\n");
+                    Log::Debug("[OpenProStreet] Map cleared.\n");
                 }
                 lastLoggedMap = displayMap;
             }
@@ -93,9 +95,10 @@ DWORD WINAPI RpcThread(LPVOID param) {
             static std::string lastLoggedCar = "";
             if (displayCar != lastLoggedCar) {
                 if (!displayCar.empty()) {
-                    printf("[OpenProStreet] Current car: '%s' (raw: '%s')\n", displayCar.c_str(), rawCar.c_str());
+                    Log::Debug("[OpenProStreet] Current car: '%s' (raw: '%s')\n", displayCar.c_str(), rawCar.c_str());
+                    Log::Summary(Log::Tag::Game, "car: %s\n", Log::Highlight(displayCar).c_str());
                 } else {
-                    printf("[OpenProStreet] Car cleared.\n");
+                    Log::Debug("[OpenProStreet] Car cleared.\n");
                 }
                 lastLoggedCar = displayCar;
             }
@@ -107,9 +110,10 @@ DWORD WINAPI RpcThread(LPVOID param) {
             static std::string lastLoggedMode = "";
             if (raceMode != lastLoggedMode) {
                 if (!raceMode.empty()) {
-                    printf("[OpenProStreet] Current race mode: '%s'\n", raceMode.c_str());
+                    Log::Debug("[OpenProStreet] Current race mode: '%s'\n", raceMode.c_str());
+                    Log::Summary(Log::Tag::Game, "race type: %s\n", Log::Highlight(raceMode).c_str());
                 } else {
-                    printf("[OpenProStreet] Race mode cleared.\n");
+                    Log::Debug("[OpenProStreet] Race mode cleared.\n");
                 }
                 lastLoggedMode = raceMode;
             }
@@ -183,7 +187,13 @@ DWORD WINAPI RpcThread(LPVOID param) {
             }
 
         } catch (...) {
-            printf("[OpenProStreet] Exception caught in Discord thread.\n");
+            static bool warned = false;
+            if (!warned) {
+                warned = true;
+                Log::Warn("Exception caught in Discord thread.\n");
+            } else {
+                Log::Debug("[OpenProStreet] Exception caught in Discord thread.\n");
+            }
             activity.SetState("In Menus");
             activity.SetDetails("Error reading data");
         }

@@ -13,6 +13,7 @@
 #include <sstream>
 
 #include "net/secure_client.h"
+#include "log.h"
 
 extern const std::string version;
 
@@ -62,7 +63,7 @@ namespace ServerLink
             const size_t got = fread(g_identity, 1, sizeof(g_identity), f);
             fclose(f);
             if (got == sizeof(g_identity)) return true;
-            printf("[OpenProStreet] %s is damaged. Encrypted login is off until it's restored or deleted.\n", path.c_str());
+            Log::Error("%s is damaged. Encrypted login is off until it's restored or deleted.\n", path.c_str());
             return false;
         }
 
@@ -73,11 +74,11 @@ namespace ServerLink
         f = fopen(path.c_str(), "wb");
         if (!f || fwrite(g_identity, 1, sizeof(g_identity), f) != sizeof(g_identity)) {
             if (f) fclose(f);
-            printf("[OpenProStreet] Could not save your identity to %s\n", path.c_str());
+            Log::Error("Could not save your identity to %s\n", path.c_str());
             return false;
         }
         fclose(f);
-        printf("[OpenProStreet] Created your identity in %s. Back this file up: it's what logs you in to your account.\n", path.c_str());
+        Log::Event(Log::Tag::Client, "Created your identity in %s. Back this file up: it's what logs you in to your account.\n", path.c_str());
         return true;
     }
 
@@ -111,7 +112,7 @@ namespace ServerLink
             fprintf(f, "%s %s\n", g_serverAddress.c_str(), hex.c_str());
             fclose(f);
         }
-        printf("[OpenProStreet] First connection to %s, remembering its identity.\n", g_serverAddress.c_str());
+        Log::Event(Log::Tag::Server, "First connection to %s, remembering its identity.\n", Log::Highlight(g_serverAddress).c_str());
         return true;
     }
 
@@ -128,7 +129,7 @@ namespace ServerLink
 
     static void OnServerMessage(const std::string& xml) {
         if (xml.find("<error>") != std::string::npos) {
-            printf("[OpenProStreet] The server refused a request: %.300s\n", xml.c_str());
+            Log::Warn("The server refused a request: %s\n", Log::Highlight(xml.substr(0, 300)).c_str());
         }
     }
 
@@ -233,7 +234,7 @@ namespace ServerLink
 
         HANDLE thread = CreateThread(nullptr, 0, LinkThread, nullptr, 0, nullptr);
         if (thread) CloseHandle(thread);
-        printf("[OpenProStreet] Server link ready.\n");
+        Log::Debug("[OpenProStreet] Server link ready.\n");
         return true;
     }
 
@@ -251,7 +252,7 @@ namespace ServerLink
     void OnDataSocketConnected(uintptr_t socketHandle) {
         if (!g_hasIdentity) return;
         if (!InstallSocketHooks()) {
-            printf("[OpenProStreet] Could not hook the game's sockets (is this the v1.1 executable?). Encrypted login is off.\n");
+            Log::Error("Could not hook the game's sockets (is this the v1.1 executable?). Encrypted login is off.\n");
             return;
         }
         const SOCKET s = static_cast<SOCKET>(socketHandle);
@@ -262,7 +263,7 @@ namespace ServerLink
         DWORD addressSize = sizeof(address);
         if (getpeername(s, reinterpret_cast<sockaddr*>(&peer), &peerSize) != 0 ||
             WSAAddressToStringA(reinterpret_cast<sockaddr*>(&peer), peerSize, nullptr, address, &addressSize) != 0) {
-            printf("[OpenProStreet] Could not read the server's address. Encrypted login is off for this connection.\n");
+            Log::Warn("Could not read the server's address. Encrypted login is off for this connection.\n");
             return;
         }
 
@@ -278,7 +279,7 @@ namespace ServerLink
         callbacks.acceptServerKey = [](const uint8_t key[32]) { return AcceptServerKey(key); };
         callbacks.isKnownServer = []() { return !FindKnownServerKey().empty(); };
         callbacks.onMessage = [](const std::string& xml) { OnServerMessage(xml); };
-        callbacks.log = [](const char* text) { printf("[OpenProStreet] %s\n", text); };
+        callbacks.log = [](const char* text) { Log::Event(Log::Tag::Server, "%s\n", text); };
 
         g_client.reset(new SecureClient(g_identity, ephemeral, callbacks));
         g_client->Begin(GetTickCount());
@@ -286,7 +287,7 @@ namespace ServerLink
         params.push_back(std::make_pair(std::string("version"), version));
         SendCommand("client", "hello", params);
         if (g_quickMatchPending) SendCommand("matchmaking", "quickMatch", g_quickMatchParams);
-        printf("[OpenProStreet] Connecting to %s\n", address);
+        Log::Event(Log::Tag::Server, "Connecting to %s\n", Log::Highlight(address).c_str());
     }
 
     bool IsConnected() {

@@ -2,9 +2,9 @@
 #include "game/lanfix.h"
 #include "game/race_results.h"
 #include "game/tweaks.h"
-#include "game/decals.h"
 #include "game/quick_match.h"
 #include "net/server_link.h"
+#include "log.h"
 #include <cstdio>
 #include <discord.h>
 #include <string>
@@ -17,16 +17,20 @@ const std::string version = "7.0";
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
                       LPVOID lpReserved) {
   if (ul_reason_for_call == DLL_PROCESS_ATTACH) {
-    printf("[OpenProStreet] ASI attached. "
+    Log::Init(hModule);
+    Log::Debug("[OpenProStreet] ASI attached. "
            "(https://code.weexnes.dev/OpenProStreetClient)\n");
     char procname[MAX_PATH];
     GetModuleFileNameA(NULL, procname, MAX_PATH);
     if (strstr(procname, "nfs.exe") == NULL) {
-      printf("[OpenProStreet] Not nfs.exe, exiting.\n");
+      Log::Debug("[OpenProStreet] Not nfs.exe, exiting.\n");
       return TRUE;
     }
 
-    printf("[OpenProStreet] nfs.exe detected.\n");
+    Log::Debug("[OpenProStreet] nfs.exe detected.\n");
+    Log::Banner("OpenProStreet Client " + version,
+                {{"source", "code.weexnes.dev/OpenProStreetClient"},
+                 {"log", "short. Set Verbose=1 under [Log] in scripts\\OpenProStreetClient.ini for detail"}});
 
     DisableThreadLibraryCalls(hModule);
 
@@ -36,15 +40,14 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
     LANFix::Init();
     QuickMatch::Init(baseModule);
     Tweaks::Init(baseModule);
-    Decals::Init(baseModule);
     RaceResults::Init(baseModule);
 
     HANDLE hThread = CreateThread(NULL, 0, RpcThread, NULL, 0, NULL);
     if (hThread) {
-      printf("[OpenProStreet] RPC thread created successfully.\n");
+      Log::Debug("[OpenProStreet] RPC thread created successfully.\n");
       CloseHandle(hThread);
     } else {
-      printf("[OpenProStreet] Failed to create RPC thread.\n");
+      Log::Warn("Failed to create RPC thread.\n");
     }
   }
 

@@ -52,6 +52,18 @@ This plugin was developed for the **v1.1 (Europe) "Battery 1.1 nocdfix"** execut
 
 The first time the game starts, the plugin creates `%LOCALAPPDATA%\OpenProStreet\identity.key`. This file is what logs you in to your account, so back it up, and never share it. To play from another PC, copy it there.
 
+### Console log
+
+If another plugin opens a console, such as XNFSPS MultiFix with `EnablePrints = 1`, this plugin shows short, coloured lines there. For the detailed log, or to turn colour off, create `scripts/OpenProStreetClient.ini`:
+
+```ini
+[Log]
+Verbose=1
+Colour=0
+```
+
+Colour is also off when `NO_COLOR` is set, and the detailed log has no colour.
+
 ---
 
 ## 💻 Building from Source

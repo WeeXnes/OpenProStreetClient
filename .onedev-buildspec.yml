@@ -129,7 +129,7 @@ jobs:
         chmod +x ./build.sh
         ./build.sh
         mkdir -p ./verify
-        cp build/OpenProStreetClient.asi build/discord_game_sdk.dll ./verify/
+        cp build/OpenProStreetClient.asi build/OpenProStreetClient.asi.debug build/discord_game_sdk.dll ./verify/
     useTTY: true
     condition: SUCCESSFUL
     optional: false

@@ -12,6 +12,7 @@
 
 #include "game/hooks.h"
 #include "net/server_link.h"
+#include "log.h"
 
 namespace QuickMatch
 {
@@ -32,6 +33,7 @@ namespace QuickMatch
 
     // Set from the menu until the lobby joins a room.
     static volatile bool g_waitingForRoom = false;
+    static volatile bool g_toldNoRooms = false;
 
     // What the game's "create race day" menus are built from (0x56C2E0, 0x56C5E0, 0x56C6C0, 0x578EB0).
     static const uintptr_t CAREER_DB_PTR = 0x6B9DC8;  // 0xAB9DC8
@@ -119,7 +121,7 @@ namespace QuickMatch
     static void PickRaceDay(std::string& location, int& difficulty, std::string& text) {
         const std::map<uint32_t, std::vector<EventChoice> > all = ListEvents();
         if (all.empty()) {
-            printf("[OpenProStreet] Quick match: the game has no events to pick from yet.\n");
+            Log::Warn("Quick match: the game has no events to pick from yet.\n");
             return;
         }
         std::mt19937 random(GetTickCount());
@@ -143,7 +145,8 @@ namespace QuickMatch
             if (i != 0) text += ",";
             text += std::to_string(event.key) + ":" + std::to_string(laps) + ":" + std::to_string(event.heats);
         }
-        printf("[OpenProStreet] Quick match: picked %u event(s) at location %s, difficulty %d.\n", static_cast<unsigned>(events.size()), location.c_str(), difficulty);
+        Log::Debug("[OpenProStreet] Quick match: picked %u event(s) at location %s, difficulty %d.\n", static_cast<unsigned>(events.size()), location.c_str(), difficulty);
+        Log::Summary(Log::Tag::Match, "race day if a new room is needed: %u event(s), difficulty %d\n", static_cast<unsigned>(events.size()), difficulty);
     }
 
     typedef void (__attribute__((thiscall)) *OnOptionFn)(void*, int, int);
@@ -158,8 +161,10 @@ namespace QuickMatch
         if (state == MENU_STATE_MAIN) {
             if (option == OPTION_QUICK_RANKED || option == OPTION_QUICK_UNRANKED) {
                 const bool ranked = option == OPTION_QUICK_RANKED;
-                printf("[OpenProStreet] %s quick match: using the OpenProStreet server instead of EA's.\n", ranked ? "Ranked" : "Unranked");
+                Log::Debug("[OpenProStreet] %s quick match: using the OpenProStreet server instead of EA's.\n", ranked ? "Ranked" : "Unranked");
+                Log::Summary(Log::Tag::Match, "%s quick match on the OpenProStreet server\n", ranked ? "ranked" : "unranked");
                 g_waitingForRoom = true;
+                g_toldNoRooms = false;
                 std::string location, events;
                 int difficulty = 0;
                 PickRaceDay(location, difficulty, events);
@@ -182,11 +187,16 @@ namespace QuickMatch
 
         ListCountFn count = **reinterpret_cast<ListCountFn**>(games);
         if (count(games) <= 0) {
-            printf("[OpenProStreet] Quick match: no open rooms yet.\n");
+            Log::Debug("[OpenProStreet] Quick match: no open rooms yet.\n");
+            if (!g_toldNoRooms) {
+                g_toldNoRooms = true;
+                Log::Summary(Log::Tag::Match, "no open rooms yet, waiting\n");
+            }
             return;
         }
         g_waitingForRoom = false;
-        printf("[OpenProStreet] Quick match: joining the best room.\n");
+        Log::Debug("[OpenProStreet] Quick match: joining the best room.\n");
+        Log::Summary(Log::Tag::Match, "joining the best room\n");
         void* manager = reinterpret_cast<char*>(listener) - LISTENER_TO_MANAGER;
         reinterpret_cast<JoinSelectedFn>(g_baseModule + LAN_JOIN_SELECTED)(manager);
     }
@@ -196,6 +206,7 @@ namespace QuickMatch
         const bool ok =
             Hooks::InstallDetour((void*)(baseModule + MAIN_MENU_ON_OPTION), (void*)OnOptionHook, &g_origOnOption) &&
             Hooks::InstallDetour((void*)(baseModule + LAN_ON_GAME_LIST), (void*)OnGameListHook, &g_origOnGameList);
-        printf("[OpenProStreet] %s\n", ok ? "Quick match hooks installed." : "Could not install the quick match hooks.");
+        if (ok) Log::Debug("[OpenProStreet] Quick match hooks installed.\n");
+        else Log::Error("Could not install the quick match hooks.\n");
     }
 }

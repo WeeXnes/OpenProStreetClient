@@ -1,5 +1,6 @@
 #include "game/lanfix.h"
 #include "net/server_link.h"
+#include "log.h"
 #include <windows.h>
 #include <string>
 #include <vector>
@@ -35,7 +36,7 @@ namespace LANFix
             addr = (char*)"weexnes.dev";
         }
         AddrFamily = CheckAddressFamily(addr);
-        printf("[OpenProStreet] LANFix DataConnectionHook: addr='%s' -> AddrFamily=%u (%s)\n", addr ? addr : "NULL", AddrFamily, AddrFamily == 23 ? "AF_INET6 (IPv6)" : "AF_INET (IPv4)");
+        Log::Debug("[OpenProStreet] LANFix DataConnectionHook: addr='%s' -> AddrFamily=%u (%s)\n", addr ? addr : "NULL", AddrFamily, AddrFamily == 23 ? "AF_INET6 (IPv6)" : "AF_INET (IPv4)");
         const bool connected = reinterpret_cast<bool(__attribute__((thiscall))*)(void*, char*, void*)>(ptrDataConnection)(that, addr, unk);
         if (connected) {
             // netcodeWinsockPlatUDPSocket +0x04 is the socket (0x8271DA).
@@ -144,7 +145,7 @@ namespace LANFix
         uintptr_t baseModule = (uintptr_t)GetModuleHandle(NULL);
         if (!baseModule) return;
 
-        printf("[OpenProStreet] Initializing Win11 LAN Fix...\n");
+        Log::Debug("[OpenProStreet] Initializing Win11 LAN Fix...\n");
 
         ptrDataConnection = FindPattern(baseModule, 0x800000, "83 EC 20 33 C0 56 6A 11 6A 02 89 44 24 10");
         if (!ptrDataConnection) {
@@ -165,10 +166,12 @@ namespace LANFix
         InstallHook2(loc_8271A9);
         PatchCall(loc_823C54, (uintptr_t)DataConnectionHook);
 
-        printf("[OpenProStreet] Win11 LAN Fix applied successfully! (ptrDataConnection: 0x%p, hook Call: 0x%p)\n", (void*)ptrDataConnection, (void*)loc_823C54);
-        printf("-------------------------------------------------------------------\n");
-        printf("[OpenProStreet] LAN NOTICE: Leave the address bar empty in the\n");
-        printf("[OpenProStreet] LAN game menu to automatically connect to weexnes.dev!\n");
-        printf("-------------------------------------------------------------------\n");
+        Log::Debug("[OpenProStreet] Win11 LAN Fix applied successfully! (ptrDataConnection: 0x%p, hook Call: 0x%p)\n", (void*)ptrDataConnection, (void*)loc_823C54);
+        Log::Summary(Log::Tag::Client, "Windows 11 LAN fix active\n");
+        Log::Summary(Log::Tag::Client, "leave the LAN address empty to connect to %s\n", Log::Highlight("weexnes.dev").c_str());
+        Log::Debug("-------------------------------------------------------------------\n");
+        Log::Debug("[OpenProStreet] LAN NOTICE: Leave the address bar empty in the\n");
+        Log::Debug("[OpenProStreet] LAN game menu to automatically connect to weexnes.dev!\n");
+        Log::Debug("-------------------------------------------------------------------\n");
     }
 }

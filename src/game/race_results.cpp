@@ -4,6 +4,7 @@
 #include "game/map.h"
 #include "game/car.h"
 #include "game/race_mode.h"
+#include "log.h"
 #include <cstdio>
 #include <ctime>
 #include <fstream>
@@ -113,6 +114,41 @@ namespace RaceResults
         return oss.str();
     }
 
+    static std::string FormatPosition(int pos);
+
+    // The default console's two lines about a finished race.
+    static void LogRaceSummary(const RaceResult& res, bool isDrag) {
+        Log::Summary(Log::Tag::Race, "%s, %s, %s: %s\n", Log::Highlight(res.trackName).c_str(), res.raceMode.c_str(), res.carName.c_str(),
+                     Log::Highlight(FormatPosition(res.position)).c_str());
+
+        std::string details;
+        const auto add = [&details](const std::string& label, const std::string& value) {
+            if (!details.empty()) details += ", ";
+            details += label + " " + Log::Highlight(value);
+        };
+        if (isDrag) {
+            for (size_t h = 0; h < res.heatTimes.size(); ++h) {
+                add("heat " + std::to_string(h + 1), FormatSecondsToTime(res.heatTimes[h]));
+            }
+            if (res.bestLapSeconds > 0.0f) add("best run", FormatSecondsToTime(res.bestLapSeconds));
+        } else {
+            if (res.totalTimeSeconds > 0.0f) add("time", FormatSecondsToTime(res.totalTimeSeconds));
+            if (res.bestLapSeconds > 0.0f && res.bestLapSeconds != res.totalTimeSeconds) {
+                add("best lap", FormatSecondsToTime(res.bestLapSeconds));
+            }
+        }
+        char number[32];
+        if (res.score > 0.0f) {
+            snprintf(number, sizeof(number), "%.0f", res.score);
+            add("score", number);
+        }
+        if (res.topSpeedKmh > 0.0f) {
+            snprintf(number, sizeof(number), "%.1f km/h", res.topSpeedKmh);
+            add("top speed", number);
+        }
+        if (!details.empty()) Log::Summary(Log::Tag::Race, "%s\n", details.c_str());
+    }
+
     static std::string FormatPosition(int pos) {
         if (pos <= 0) return "Unknown";
         switch (pos) {
@@ -215,7 +251,7 @@ namespace RaceResults
         // 2. Locate Human Player RacerInfo in GRaceStatus
         uintptr_t playerRacer = FindLocalRacer(baseModule, gRaceStatus);
         if (!playerRacer) {
-            printf("[OpenProStreet] Could not find the local racer, race result not saved.\n");
+            Log::Warn("Could not find the local racer, race result not saved.\n");
             return;
         }
 
@@ -317,42 +353,43 @@ namespace RaceResults
         res.timestamp = (uint64_t)now;
 
         // Formatted Console Output for Online Leaderboard Proof-of-Concept
-        printf("\n============================================================\n");
-        printf("[OpenProStreet] === RACE COMPLETED ===\n");
-        printf("[OpenProStreet] Driver:        %.31s\n", (const char*)(playerRacer + RACER_NAME));
-        printf("[OpenProStreet] Event ID:      %s\n", res.eventId.c_str());
-        printf("[OpenProStreet] Track:         %s\n", res.trackName.c_str());
-        printf("[OpenProStreet] Mode:          %s\n", res.raceMode.c_str());
-        printf("[OpenProStreet] Car:           %s\n", res.carName.c_str());
-        printf("[OpenProStreet] Position:      %s\n", FormatPosition(res.position).c_str());
+        Log::Debug("\n============================================================\n");
+        Log::Debug("[OpenProStreet] === RACE COMPLETED ===\n");
+        Log::Debug("[OpenProStreet] Driver:        %.31s\n", (const char*)(playerRacer + RACER_NAME));
+        Log::Debug("[OpenProStreet] Event ID:      %s\n", res.eventId.c_str());
+        Log::Debug("[OpenProStreet] Track:         %s\n", res.trackName.c_str());
+        Log::Debug("[OpenProStreet] Mode:          %s\n", res.raceMode.c_str());
+        Log::Debug("[OpenProStreet] Car:           %s\n", res.carName.c_str());
+        Log::Debug("[OpenProStreet] Position:      %s\n", FormatPosition(res.position).c_str());
 
         if (isDrag) {
             for (size_t h = 0; h < res.heatTimes.size(); ++h) {
-                printf("[OpenProStreet] Heat %u:        %s (%.3fs)\n", (unsigned)(h + 1), FormatSecondsToTime(res.heatTimes[h]).c_str(), res.heatTimes[h]);
+                Log::Debug("[OpenProStreet] Heat %u:        %s (%.3fs)\n", (unsigned)(h + 1), FormatSecondsToTime(res.heatTimes[h]).c_str(), res.heatTimes[h]);
             }
             if (res.bestLapSeconds > 0.0f) {
-                printf("[OpenProStreet] Best Run:      %s (%.3fs)\n", FormatSecondsToTime(res.bestLapSeconds).c_str(), res.bestLapSeconds);
+                Log::Debug("[OpenProStreet] Best Run:      %s (%.3fs)\n", FormatSecondsToTime(res.bestLapSeconds).c_str(), res.bestLapSeconds);
             }
         } else {
             if (res.totalTimeSeconds > 0.0f) {
-                printf("[OpenProStreet] Total Time:    %s (%.3fs)\n", FormatSecondsToTime(res.totalTimeSeconds).c_str(), res.totalTimeSeconds);
+                Log::Debug("[OpenProStreet] Total Time:    %s (%.3fs)\n", FormatSecondsToTime(res.totalTimeSeconds).c_str(), res.totalTimeSeconds);
             }
             if (res.bestLapSeconds > 0.0f && res.bestLapSeconds != res.totalTimeSeconds) {
-                printf("[OpenProStreet] Best Lap:      %s (%.3fs)\n", FormatSecondsToTime(res.bestLapSeconds).c_str(), res.bestLapSeconds);
+                Log::Debug("[OpenProStreet] Best Lap:      %s (%.3fs)\n", FormatSecondsToTime(res.bestLapSeconds).c_str(), res.bestLapSeconds);
             }
             // Print individual laps breakdown
             for (size_t l = 0; l < res.lapTimes.size(); ++l) {
-                printf("[OpenProStreet] Lap %u:         %s (%.3fs)\n", (unsigned)(l + 1), FormatSecondsToTime(res.lapTimes[l]).c_str(), res.lapTimes[l]);
+                Log::Debug("[OpenProStreet] Lap %u:         %s (%.3fs)\n", (unsigned)(l + 1), FormatSecondsToTime(res.lapTimes[l]).c_str(), res.lapTimes[l]);
             }
         }
 
         if (res.score > 0.0f) {
-            printf("[OpenProStreet] Score / Pts:   %.0f pts\n", res.score);
+            Log::Debug("[OpenProStreet] Score / Pts:   %.0f pts\n", res.score);
         }
         if (res.topSpeedKmh > 0.0f) {
-            printf("[OpenProStreet] Top Speed:     %.1f km/h\n", res.topSpeedKmh);
+            Log::Debug("[OpenProStreet] Top Speed:     %.1f km/h\n", res.topSpeedKmh);
         }
-        printf("============================================================\n\n");
+        Log::Debug("============================================================\n\n");
+        LogRaceSummary(res, isDrag);
 
         // Save JSONL record
         SaveRaceResultToJson(res);
@@ -466,7 +503,7 @@ namespace RaceResults
         if (!baseModule) return;
         g_baseModule = baseModule;
 
-        printf("[OpenProStreet] Initializing Post-Race State Manager Hooks...\n");
+        Log::Debug("[OpenProStreet] Initializing Post-Race State Manager Hooks...\n");
 
         uintptr_t loc_5A7750 = baseModule + 0x1A7750;
         uintptr_t loc_5FA460 = baseModule + 0x1FA460;
@@ -476,27 +513,27 @@ namespace RaceResults
         uintptr_t loc_695DE0 = baseModule + 0x295DE0;
 
         if (Hooks::InstallDetour((void*)loc_5A7750, (void*)SinglePlayer_HandleScreenConstructed_Hook, &g_origSinglePlayerHandleScreenConstructed, 7)) {
-            printf("[OpenProStreet] SP PostRaceStateManager hook installed at 0x%p\n", (void*)loc_5A7750);
+            Log::Debug("[OpenProStreet] SP PostRaceStateManager hook installed at 0x%p\n", (void*)loc_5A7750);
         }
 
         if (Hooks::InstallDetour((void*)loc_5FA460, (void*)Online_HandleScreenConstructed_Hook, &g_origOnlineHandleScreenConstructed, 7)) {
-            printf("[OpenProStreet] Online PostRaceStateManager hook installed at 0x%p\n", (void*)loc_5FA460);
+            Log::Debug("[OpenProStreet] Online PostRaceStateManager hook installed at 0x%p\n", (void*)loc_5FA460);
         }
 
         if (Hooks::InstallDetour((void*)loc_5982F0, (void*)FePostRaceRewards_PopulateData_Hook, &g_origPopulateData, 7)) {
-            printf("[OpenProStreet] FePostRaceRewards::PopulateData hook installed at 0x%p\n", (void*)loc_5982F0);
+            Log::Debug("[OpenProStreet] FePostRaceRewards::PopulateData hook installed at 0x%p\n", (void*)loc_5982F0);
         }
 
         if (Hooks::InstallDetour((void*)loc_614340, (void*)SetTimeBonus_Hook, &g_origSetTimeBonus, 7)) {
-            printf("[OpenProStreet] SetTimeBonus hook installed at 0x%p\n", (void*)loc_614340);
+            Log::Debug("[OpenProStreet] SetTimeBonus hook installed at 0x%p\n", (void*)loc_614340);
         }
 
         if (Hooks::InstallDetour((void*)loc_614360, (void*)SetPoints_Hook, &g_origSetPoints, 7)) {
-            printf("[OpenProStreet] SetPoints hook installed at 0x%p\n", (void*)loc_614360);
+            Log::Debug("[OpenProStreet] SetPoints hook installed at 0x%p\n", (void*)loc_614360);
         }
 
         if (Hooks::InstallDetour((void*)loc_695DE0, (void*)LapChanged_Hook, &g_origLapChanged, 7)) {
-            printf("[OpenProStreet] Lap hook installed at 0x%p\n", (void*)loc_695DE0);
+            Log::Debug("[OpenProStreet] Lap hook installed at 0x%p\n", (void*)loc_695DE0);
         }
     }
 }

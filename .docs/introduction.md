@@ -13,7 +13,7 @@ It runs inside `nfs.exe`, without changing the game's files:
 - **Quick match:** sends the game's "Schnelles Spiel" menu to the OpenProStreet server instead of EA's closed servers, and joins the room the server picks.
 - **Windows 10 and 11 LAN fix:** lets the game's 2007 network code connect at all.
 - **Discord Rich Presence:** shows your track, race mode, car and Raceday XP.
-- **Custom PNG decals** and other tweaks.
+- **Tweaks** to the game's menus and liveries.
 
 ---
 
@@ -22,7 +22,7 @@ It runs inside `nfs.exe`, without changing the game's files:
 1. **ASI loader:** `DllMain` checks that the process is `nfs.exe`.
 2. **Server link (`src/net/server_link.cpp`):** loads your identity and hooks the game's socket calls.
 3. **LAN fix (`src/game/lanfix.cpp`):** patches socket creation, and tells the server link when the game connects.
-4. **Hooks:** quick match menu commands, race results, decals and tweaks.
+4. **Hooks:** quick match menu commands, race results and tweaks.
 5. **Discord thread:** polls game memory and updates the activity.
 
 ---

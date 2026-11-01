@@ -8,11 +8,11 @@ set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 set(CLIENT_SOURCES
+    src/log.cpp
     src/main.cpp
     src/utils.cpp
     src/discord/discord_rpc.cpp
     src/game/car.cpp
-    src/game/decals.cpp
     src/game/hooks.cpp
     src/game/lanfix.cpp
     src/game/map.cpp
@@ -22,6 +22,7 @@ set(CLIENT_SOURCES
     src/game/tweaks.cpp
     src/net/secure_client.cpp
     src/net/server_link.cpp
+    src/version.rc
     vendor/monocypher/monocypher.c
     vendor/monocypher/monocypher-ed25519.c
 )
@@ -61,12 +62,17 @@ if(EXISTS "${THIRDPARTY_SDK_DIR}")
             -static-libstdc++
             -static
         )
+        # Most of the file would be debug info from the static libraries. The release file leaves
+        # it out, and the copy with it stays next to it, to look into crashes and detections.
+        add_custom_command(TARGET OpenProStreetClient POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:OpenProStreetClient> $<TARGET_FILE:OpenProStreetClient>.debug
+            COMMAND ${CMAKE_STRIP} --strip-all $<TARGET_FILE:OpenProStreetClient>
+        )
     endif()
 
     # For MinGW, we can link directly to the 32-bit dll.lib (import library)
     target_link_libraries(OpenProStreetClient PRIVATE
         "${THIRDPARTY_SDK_DIR}/lib/x86/discord_game_sdk.dll.lib"
-        d3d9
         ws2_32
         bcrypt
     )
