@@ -6,7 +6,7 @@
 namespace Tweaks
 {
     // The game reads one byte per character, so the copyright sign has to be its single Latin-1 byte.
-    static const char* g_customCopyrightString = "\xA9 2007 Electronic Arts Inc. All rights reserved.^OpenProStreet v7.0 by WeeXnes";
+    static const char* g_customCopyrightString = "\xA9 2007 Electronic Arts Inc. All rights reserved.^OpenProStreet v7.1 by WeeXnes";
     static uintptr_t g_loc_595859 = 0;
 
     static void PatchMemory(uintptr_t address, const void* data, size_t size)
@@ -98,11 +98,45 @@ namespace Tweaks
         Log::Debug("[OpenProStreet] Special vinyls & premade liveries unlocked successfully.\n");
     }
 
+    // While minimized, the game's message pump (0x701250) waits in GetMessageA, which stops the
+    // main loop until a window message arrives. Removing this jump makes the pump use PeekMessageA
+    // there too.
+    static void KeepRunningWhileMinimized(uintptr_t baseModule)
+    {
+        const uint8_t expected[] = { 0x85, 0xC9, 0x75, 0x0E };
+        const uintptr_t test = baseModule + 0x3012DC;
+        if (memcmp((const void*)test, expected, sizeof(expected)) != 0)
+        {
+            Log::Debug("[OpenProStreet] Message pump not recognised, leaving it alone.\n");
+            return;
+        }
+        PatchNOP(test + 2, 2);
+        Log::Debug("[OpenProStreet] The game keeps running while minimized.\n");
+    }
+
+    // On WM_ACTIVATEAPP, the game calls 0x7BB1C0, which runs an online handler (0x7B3640) when it
+    // loses focus. Turning the jump into an unconditional one skips that handler, so tabbing out
+    // no longer ends the online session.
+    static void StayOnlineWithoutFocus(uintptr_t baseModule)
+    {
+        const uint8_t expected[] = { 0x80, 0x7C, 0x24, 0x04, 0x00, 0x75, 0x05, 0xE9 };
+        const uintptr_t focusLost = baseModule + 0x3BB1C0;
+        if (memcmp((const void*)focusLost, expected, sizeof(expected)) != 0)
+        {
+            Log::Debug("[OpenProStreet] Focus handler not recognised, leaving it alone.\n");
+            return;
+        }
+        PatchByte(focusLost + 5, 0xEB);
+        Log::Debug("[OpenProStreet] Tabbing out no longer ends the online session.\n");
+    }
+
     void Init(uintptr_t baseModule)
     {
         if (!baseModule) return;
         Log::Debug("[OpenProStreet] Initializing Extra Tweaks...\n");
         UnlockSpecialLiveries(baseModule);
         InstallCopyrightStringHook(baseModule);
+        KeepRunningWhileMinimized(baseModule);
+        StayOnlineWithoutFocus(baseModule);
     }
 }
