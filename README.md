@@ -75,6 +75,17 @@ Borderless=1
 
 The game keeps running when you tab out. Set its resolution to your monitor's for the sharpest picture, because other resolutions are stretched to fit.
 
+### Writing a server's event catalog
+
+Server admins who use the control panel need a list of the game's events, and only the game knows them. Add this to `scripts/OpenProStreetClient.ini`, start the game and open LAN play or Quick Match once:
+
+```ini
+[Debug]
+DumpEvents=1
+```
+
+The plugin writes `%LOCALAPPDATA%\OpenProStreet\event_catalog.json`. Copy it next to the server, then remove the setting.
+
 ### Console log
 
 If another plugin opens a console, such as XNFSPS MultiFix with `EnablePrints = 1`, this plugin shows short, coloured lines there. For the detailed log, or to turn colour off, create `scripts/OpenProStreetClient.ini`:

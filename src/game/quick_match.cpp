@@ -11,6 +11,8 @@
 #include <vector>
 
 #include "game/hooks.h"
+#include "game/map.h"
+#include "game/race_mode.h"
 #include "net/server_link.h"
 #include "log.h"
 
@@ -149,6 +151,47 @@ namespace QuickMatch
         Log::Summary(Log::Tag::Match, "race day if a new room is needed: %u event(s), difficulty %d\n", static_cast<unsigned>(events.size()), difficulty);
     }
 
+    // With DumpEvents=1 under [Debug] in the settings file, writes every location and event the
+    // menus offer for a server's event_catalog.json. Only the game knows them, so a server admin runs
+    // this once. The event data is loaded by the time the player can pick an online option.
+    static bool g_dumpEvents = false;
+
+    static void DumpEventCatalog() {
+        g_dumpEvents = false;
+        const std::map<uint32_t, std::vector<EventChoice> > all = ListEvents();
+        if (all.empty()) {
+            Log::Warn("Event dump: the game has no events loaded yet.\n");
+            g_dumpEvents = true;
+            return;
+        }
+        const char* appData = getenv("LOCALAPPDATA");
+        const std::string path = std::string(appData ? appData : ".") + "\\OpenProStreet\\event_catalog.json";
+        FILE* f = fopen(path.c_str(), "w");
+        if (!f) {
+            Log::Warn("Event dump: could not write %s\n", path.c_str());
+            return;
+        }
+        fputs("{\"locations\":[\n", f);
+        bool firstLocation = true;
+        for (std::map<uint32_t, std::vector<EventChoice> >::const_iterator location = all.begin(); location != all.end(); ++location) {
+            std::string name = MapNameForKey(location->first);
+            if (name.empty()) name = "Location " + std::to_string(location->first);
+            fprintf(f, "%s{\"key\":%u,\"name\":\"%s\",\"events\":[\n", firstLocation ? "" : ",\n", location->first, name.c_str());
+            firstLocation = false;
+            for (size_t i = 0; i < location->second.size(); ++i) {
+                const EventChoice& event = location->second[i];
+                std::string modeName = RaceModeName(event.mode);
+                if (modeName.empty()) modeName = "Mode " + std::to_string(event.mode);
+                fprintf(f, "%s{\"key\":%u,\"name\":\"%s %u\",\"mode\":%d,\"modeName\":\"%s\",\"laps\":%u,\"heats\":%u,\"maxLaps\":%u}",
+                        i == 0 ? "" : ",\n", event.key, modeName.c_str(), static_cast<unsigned>(i + 1), event.mode, modeName.c_str(), event.laps, event.heats, event.maxLaps);
+            }
+            fputs("\n]}", f);
+        }
+        fputs("\n]}\n", f);
+        fclose(f);
+        Log::Event(Log::Tag::Client, "Wrote the event catalog to %s\n", path.c_str());
+    }
+
     typedef void (__attribute__((thiscall)) *OnOptionFn)(void*, int, int);
     typedef void (__attribute__((thiscall)) *OnGameListFn)(void*, void*);
     typedef int (__attribute__((thiscall)) *ListCountFn)(void*);
@@ -159,6 +202,7 @@ namespace QuickMatch
     static void __attribute__((thiscall)) OnOptionHook(void* manager, int option, int param) {
         const int state = *reinterpret_cast<int*>(reinterpret_cast<char*>(manager) + 4);
         if (state == MENU_STATE_MAIN) {
+            if (g_dumpEvents && (option == OPTION_LAN_PLAY || option == OPTION_QUICK_RANKED || option == OPTION_QUICK_UNRANKED)) DumpEventCatalog();
             if (option == OPTION_QUICK_RANKED || option == OPTION_QUICK_UNRANKED) {
                 const bool ranked = option == OPTION_QUICK_RANKED;
                 Log::Debug("[OpenProStreet] %s quick match: using the OpenProStreet server instead of EA's.\n", ranked ? "Ranked" : "Unranked");
@@ -203,6 +247,8 @@ namespace QuickMatch
 
     void Init(uintptr_t baseModule) {
         g_baseModule = baseModule;
+        const std::string& settings = Log::SettingsPath();
+        g_dumpEvents = !settings.empty() && GetPrivateProfileIntA("Debug", "DumpEvents", 0, settings.c_str()) != 0;
         const bool ok =
             Hooks::InstallDetour((void*)(baseModule + MAIN_MENU_ON_OPTION), (void*)OnOptionHook, &g_origOnOption) &&
             Hooks::InstallDetour((void*)(baseModule + LAN_ON_GAME_LIST), (void*)OnGameListHook, &g_origOnGameList);

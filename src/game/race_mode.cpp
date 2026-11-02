@@ -44,6 +44,10 @@ static std::string TranslateRaceModeId(int8_t modeId) {
     }
 }
 
+std::string RaceModeName(int mode) {
+    return mode >= 0 && mode < 36 ? TranslateRaceModeId(static_cast<int8_t>(mode)) : "";
+}
+
 static std::string g_lastKnownRaceMode = "";
 
 bool IsRaceActive(uintptr_t baseModule) {

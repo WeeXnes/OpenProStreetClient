@@ -5,6 +5,9 @@
 #include <string>
 #include <cstdint>
 
+// The name of an event's mode, or empty if it isn't known.
+std::string RaceModeName(int mode);
+
 // True only from race start until the race ends, not while an event is merely loaded in the menus
 bool IsRaceActive(uintptr_t baseModule);
 

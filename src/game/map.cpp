@@ -18,6 +18,55 @@ static const std::unordered_map<std::string, std::string> MAP_TRANSLATION_TABLE 
     {"infineon", "Infineon Raceway"}
 };
 
+// Attrib::StringHash32: Bob Jenkins' lookup2, which the game's collection keys use.
+static void HashMix(uint32_t& a, uint32_t& b, uint32_t& c) {
+    a -= b; a -= c; a ^= c >> 13;
+    b -= c; b -= a; b ^= a << 8;
+    c -= a; c -= b; c ^= b >> 13;
+    a -= b; a -= c; a ^= c >> 12;
+    b -= c; b -= a; b ^= a << 16;
+    c -= a; c -= b; c ^= b >> 5;
+    a -= b; a -= c; a ^= c >> 3;
+    b -= c; b -= a; b ^= a << 10;
+    c -= a; c -= b; c ^= b >> 15;
+}
+
+static uint32_t StringHash32(const std::string& text) {
+    const uint8_t* k = reinterpret_cast<const uint8_t*>(text.data());
+    size_t remaining = text.size();
+    uint32_t a = 0x9E3779B9, b = 0x9E3779B9, c = 0xABCDEF00;
+    const auto word = [](const uint8_t* p) { return p[0] | (p[1] << 8) | (p[2] << 16) | (static_cast<uint32_t>(p[3]) << 24); };
+    while (remaining >= 12) {
+        a += word(k);
+        b += word(k + 4);
+        c += word(k + 8);
+        HashMix(a, b, c);
+        k += 12;
+        remaining -= 12;
+    }
+    c += static_cast<uint32_t>(text.size());
+    if (remaining >= 11) c += static_cast<uint32_t>(k[10]) << 24;
+    if (remaining >= 10) c += static_cast<uint32_t>(k[9]) << 16;
+    if (remaining >= 9) c += static_cast<uint32_t>(k[8]) << 8;
+    if (remaining >= 8) b += static_cast<uint32_t>(k[7]) << 24;
+    if (remaining >= 7) b += static_cast<uint32_t>(k[6]) << 16;
+    if (remaining >= 6) b += static_cast<uint32_t>(k[5]) << 8;
+    if (remaining >= 5) b += k[4];
+    if (remaining >= 4) a += static_cast<uint32_t>(k[3]) << 24;
+    if (remaining >= 3) a += static_cast<uint32_t>(k[2]) << 16;
+    if (remaining >= 2) a += static_cast<uint32_t>(k[1]) << 8;
+    if (remaining >= 1) a += k[0];
+    HashMix(a, b, c);
+    return c;
+}
+
+std::string MapNameForKey(uint32_t key) {
+    for (const auto& entry : MAP_TRANSLATION_TABLE) {
+        if (StringHash32(entry.first) == key) return entry.second;
+    }
+    return "";
+}
+
 bool IsValidMapIdentifier(const std::string& str) {
     if (str.length() < 2 || str.length() > 64) {
         return false;
