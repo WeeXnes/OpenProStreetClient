@@ -1,4 +1,5 @@
 #include "discord/discord_rpc.h"
+#include "game/borderless.h"
 #include "game/lanfix.h"
 #include "game/race_results.h"
 #include "game/tweaks.h"
@@ -12,7 +13,7 @@
 
 discord::Core *discordCore = nullptr;
 
-const std::string version = "7.1";
+const std::string version = "7.2";
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
                       LPVOID lpReserved) {
@@ -40,6 +41,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
     LANFix::Init();
     QuickMatch::Init(baseModule);
     Tweaks::Init(baseModule);
+    Borderless::Init(baseModule);
     RaceResults::Init(baseModule);
 
     HANDLE hThread = CreateThread(NULL, 0, RpcThread, NULL, 0, NULL);

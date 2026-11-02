@@ -1,4 +1,5 @@
 #include "game/lanfix.h"
+#include "game/hooks.h"
 #include "net/server_link.h"
 #include "log.h"
 #include <windows.h>
@@ -11,6 +12,22 @@ namespace LANFix
 {
     uintptr_t ptrDataConnection = 0x827190;
     uint32_t AddrFamily = 2;
+
+    // netcodeConnectionSystemImpl in nfs.exe v1.1, as offsets from the image base.
+    static const uintptr_t CONNECT_TO_SERVER = 0x41FCB0; // 0x81FCB0: connects to an address and port
+    static const uintptr_t FIND_LAN_SERVER = 0x41FF00;   // 0x81FF00: broadcasts for a server on the LAN
+
+    static const char* const DEFAULT_ADDRESS = "weexnes.dev";
+    static const int DEFAULT_PORT = 10104;
+
+    typedef void (__attribute__((thiscall)) *ConnectToServerFn)(void*, const char*, const char*);
+    typedef void (__attribute__((thiscall)) *FindLanServerFn)(void*);
+
+    // The game keeps pointers to these until the connection is made, so they stay allocated.
+    static std::string g_serverAddress = DEFAULT_ADDRESS;
+    static std::string g_serverPort = std::to_string(DEFAULT_PORT);
+    static uintptr_t g_baseModule = 0;
+    static void* g_origFindLanServer = nullptr;
 
     uint32_t CheckAddressFamily(const char* addr)
     {
@@ -32,9 +49,6 @@ namespace LANFix
 
     bool __attribute__((thiscall)) DataConnectionHook(void* that, char* addr, void* unk)
     {
-        if (!addr || addr[0] == '\0' || strcmp(addr, "0.0.0.0") == 0 || strcmp(addr, "localhost") == 0 || strcmp(addr, "127.0.0.1") == 0) {
-            addr = (char*)"weexnes.dev";
-        }
         AddrFamily = CheckAddressFamily(addr);
         Log::Debug("[OpenProStreet] LANFix DataConnectionHook: addr='%s' -> AddrFamily=%u (%s)\n", addr ? addr : "NULL", AddrFamily, AddrFamily == 23 ? "AF_INET6 (IPv6)" : "AF_INET (IPv4)");
         const bool connected = reinterpret_cast<bool(__attribute__((thiscall))*)(void*, char*, void*)>(ptrDataConnection)(that, addr, unk);
@@ -43,6 +57,37 @@ namespace LANFix
             ServerLink::OnDataSocketConnected(*reinterpret_cast<uintptr_t*>(reinterpret_cast<char*>(that) + 4));
         }
         return connected;
+    }
+
+    // Opening the LAN menu, the game broadcasts for a server, and only shows the address screen if
+    // none answers. A broadcast can't reach a server over the internet or a VPN. With an address in
+    // the settings, this connects there instead, so the game carries on as if the search found it.
+    static void __attribute__((thiscall)) FindLanServerHook(void* connectionSystem)
+    {
+        if (g_serverAddress.empty()) {
+            reinterpret_cast<FindLanServerFn>(g_origFindLanServer)(connectionSystem);
+            return;
+        }
+        Log::Event(Log::Tag::Server, "Connecting to %s:%s\n", Log::Highlight(g_serverAddress).c_str(), g_serverPort.c_str());
+        reinterpret_cast<ConnectToServerFn>(g_baseModule + CONNECT_TO_SERVER)(connectionSystem, g_serverAddress.c_str(), g_serverPort.c_str());
+    }
+
+    static void LoadServerSettings()
+    {
+        const std::string& settings = Log::SettingsPath();
+        if (settings.empty()) return;
+
+        // An Address line left empty is different from no line: it turns the default off.
+        char address[256] = {};
+        GetPrivateProfileStringA("Server", "Address", DEFAULT_ADDRESS, address, sizeof(address), settings.c_str());
+        g_serverAddress = address;
+
+        int port = GetPrivateProfileIntA("Server", "Port", DEFAULT_PORT, settings.c_str());
+        if (port < 1 || port > 65535) {
+            Log::Warn("Port %d under [Server] isn't valid, using %d.\n", port, DEFAULT_PORT);
+            port = DEFAULT_PORT;
+        }
+        g_serverPort = std::to_string(port);
     }
 
     uintptr_t FindPattern(uintptr_t startAddr, size_t searchSize, const std::string& pattern)
@@ -168,10 +213,15 @@ namespace LANFix
 
         Log::Debug("[OpenProStreet] Win11 LAN Fix applied successfully! (ptrDataConnection: 0x%p, hook Call: 0x%p)\n", (void*)ptrDataConnection, (void*)loc_823C54);
         Log::Summary(Log::Tag::Client, "Windows 11 LAN fix active\n");
-        Log::Summary(Log::Tag::Client, "leave the LAN address empty to connect to %s\n", Log::Highlight("weexnes.dev").c_str());
-        Log::Debug("-------------------------------------------------------------------\n");
-        Log::Debug("[OpenProStreet] LAN NOTICE: Leave the address bar empty in the\n");
-        Log::Debug("[OpenProStreet] LAN game menu to automatically connect to weexnes.dev!\n");
-        Log::Debug("-------------------------------------------------------------------\n");
+
+        g_baseModule = baseModule;
+        LoadServerSettings();
+        if (!Hooks::InstallDetour((void*)(baseModule + FIND_LAN_SERVER), (void*)FindLanServerHook, &g_origFindLanServer)) {
+            Log::Error("Could not install the server address hook.\n");
+        } else if (g_serverAddress.empty()) {
+            Log::Event(Log::Tag::Client, "No server set: searching the LAN, then asking for an address\n");
+        } else {
+            Log::Event(Log::Tag::Client, "Server set to %s:%s, skipping the address screen\n", Log::Highlight(g_serverAddress).c_str(), g_serverPort.c_str());
+        }
     }
 }

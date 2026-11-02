@@ -52,6 +52,29 @@ This plugin was developed for the **v1.1 (Europe) "Battery 1.1 nocdfix"** execut
 
 The first time the game starts, the plugin creates `%LOCALAPPDATA%\OpenProStreet\identity.key`. This file is what logs you in to your account, so back it up, and never share it. To play from another PC, copy it there.
 
+### Choosing a server
+
+The plugin goes straight to `weexnes.dev`, without the address screen. To use another server, create `scripts/OpenProStreetClient.ini`:
+
+```ini
+[Server]
+Address=play.example.com
+Port=10104
+```
+
+`Address` is a domain or IP address. `Port` is optional. With `Address=` left empty, the game searches your LAN for a server, then asks for an address if it finds none.
+
+### Borderless fullscreen
+
+To run the game in a borderless window that fills your primary monitor, add this to `scripts/OpenProStreetClient.ini`:
+
+```ini
+[Display]
+Borderless=1
+```
+
+The game keeps running when you tab out. Set its resolution to your monitor's for the sharpest picture, because other resolutions are stretched to fit.
+
 ### Console log
 
 If another plugin opens a console, such as XNFSPS MultiFix with `EnablePrints = 1`, this plugin shows short, coloured lines there. For the detailed log, or to turn colour off, create `scripts/OpenProStreetClient.ini`:

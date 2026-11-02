@@ -17,6 +17,9 @@ namespace Log
 
     bool IsVerbose();
 
+    // The settings file next to the plugin. Empty if its path couldn't be worked out.
+    const std::string& SettingsPath();
+
     // Shows a name or value in bold on the default console.
     std::string Highlight(const std::string& text);
 

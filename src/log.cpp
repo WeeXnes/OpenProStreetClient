@@ -209,6 +209,8 @@ namespace Log
         else WriteTagged(tag, message);
     }
 
+    static std::string g_settingsPath;
+
     void Init(void* module)
     {
         InitializeCriticalSection(&g_lock);
@@ -221,6 +223,7 @@ namespace Log
             const size_t dot = settings.find_last_of('.');
             if (dot != std::string::npos) settings.erase(dot);
             settings += ".ini";
+            g_settingsPath = settings;
             g_verbose = GetPrivateProfileIntA("Log", "Verbose", 0, settings.c_str()) != 0;
             g_colourSetting = GetPrivateProfileIntA("Log", "Colour", 1, settings.c_str()) != 0;
         }
@@ -229,6 +232,8 @@ namespace Log
     }
 
     bool IsVerbose() { return g_verbose; }
+
+    const std::string& SettingsPath() { return g_settingsPath; }
 
     std::string Highlight(const std::string& text)
     {
