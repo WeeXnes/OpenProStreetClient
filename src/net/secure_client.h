@@ -18,16 +18,12 @@ public:
         Handshaking,
         Established,
         Plaintext, // the server doesn't speak this protocol, such as the 2007 servers
-        Failed     // the server's identity changed, or a known server stopped answering
+        Failed     // the handshake didn't finish, or the server refused it
     };
 
     struct Callbacks {
         // Sends a datagram to the server.
         std::function<void(const uint8_t* data, int len)> send;
-        // Pins the server's key. False means this address is known with a different key.
-        std::function<bool(const uint8_t key[32])> acceptServerKey;
-        // True if this address has been seen with a key before, so it must not fall back to plaintext.
-        std::function<bool()> isKnownServer;
         // A message from the server on the client channel.
         std::function<void(const std::string& xml)> onMessage;
         std::function<void(const char* text)> log;

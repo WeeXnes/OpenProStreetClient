@@ -83,10 +83,9 @@ The game's reliable connection uses `netcodeWinsockPlatUDPSocket`: `socket` and 
 
 | File in `%LOCALAPPDATA%\\OpenProStreet` | Contents |
 | :--- | :--- |
-| `identity.key` | The player's Ed25519 secret key. Losing it means losing the account, unless the server's owner runs `openprostreetd -clearkey <name>`. |
-| `known_servers.txt` | The identity of each server seen, one per line. A server that changes identity is refused until its line is removed. |
+| `identity.key` | The PC's Ed25519 secret key, used for the encrypted connection. It isn't the login: an account's name and password work on any PC. |
 
-If a server never answers the handshake within 2 seconds, it's treated as an old server and the game's plaintext protocol is used, unless it's listed in `known_servers.txt`.
+The client doesn't remember servers. If a server never answers the handshake within 2 seconds, it's treated as an old server and the game's plaintext protocol is used.
 
 ---
 

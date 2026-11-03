@@ -38,7 +38,6 @@ namespace ServerLink
     static CRITICAL_SECTION g_lock;
     static SOCKET g_socket = INVALID_SOCKET;
     static std::unique_ptr<SecureClient> g_client;
-    static std::string g_serverAddress;
     static std::string g_dataDirectory;
     static uint8_t g_identity[64];
     static bool g_hasIdentity = false;
@@ -79,40 +78,6 @@ namespace ServerLink
         }
         fclose(f);
         Log::Event(Log::Tag::Client, "Created your identity in %s. Back this file up: it's what logs you in to your account.\n", path.c_str());
-        return true;
-    }
-
-    static std::string HexKey(const uint8_t key[32]) {
-        char out[65];
-        for (int i = 0; i < 32; ++i) snprintf(out + i * 2, 3, "%02x", key[i]);
-        return std::string(out, 64);
-    }
-
-    // known_servers.txt: one "address key" line per server, like SSH's known_hosts.
-    static std::string FindKnownServerKey() {
-        std::string found;
-        FILE* f = fopen((g_dataDirectory + "\\known_servers.txt").c_str(), "r");
-        if (!f) return found;
-        char line[256];
-        while (fgets(line, sizeof(line), f)) {
-            std::istringstream row(line);
-            std::string address, key;
-            if ((row >> address >> key) && address == g_serverAddress) found = key;
-        }
-        fclose(f);
-        return found;
-    }
-
-    static bool AcceptServerKey(const uint8_t key[32]) {
-        const std::string hex = HexKey(key);
-        const std::string known = FindKnownServerKey();
-        if (!known.empty()) return known == hex;
-        FILE* f = fopen((g_dataDirectory + "\\known_servers.txt").c_str(), "a");
-        if (f) {
-            fprintf(f, "%s %s\n", g_serverAddress.c_str(), hex.c_str());
-            fclose(f);
-        }
-        Log::Event(Log::Tag::Server, "First connection to %s, remembering its identity.\n", Log::Highlight(g_serverAddress).c_str());
         return true;
     }
 
@@ -244,6 +209,7 @@ namespace ServerLink
         const char* appData = getenv("LOCALAPPDATA");
         g_dataDirectory = std::string(appData ? appData : ".") + "\\OpenProStreet";
         CreateDirectoryA(g_dataDirectory.c_str(), nullptr);
+        DeleteFileA((g_dataDirectory + "\\known_servers.txt").c_str()); // left by versions before 7.4
         g_hasIdentity = LoadIdentity();
         g_baseModule = baseModule;
         if (g_hasIdentity) InstallSocketHooks();
@@ -272,12 +238,9 @@ namespace ServerLink
 
         Lock lock;
         g_socket = s;
-        g_serverAddress = address;
 
         SecureClient::Callbacks callbacks;
         callbacks.send = [s](const uint8_t* data, int len) { g_realSend(s, reinterpret_cast<const char*>(data), len, 0); };
-        callbacks.acceptServerKey = [](const uint8_t key[32]) { return AcceptServerKey(key); };
-        callbacks.isKnownServer = []() { return !FindKnownServerKey().empty(); };
         callbacks.onMessage = [](const std::string& xml) { OnServerMessage(xml); };
         callbacks.log = [](const char* text) { Log::Event(Log::Tag::Server, "%s\n", text); };
 

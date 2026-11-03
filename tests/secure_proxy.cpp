@@ -69,9 +69,7 @@ int main(int argc, char** argv) {
     serverAddress.sin_port = htons(static_cast<u_short>(atoi(argv[2])));
 
     std::map<std::string, std::unique_ptr<Peer>> peers;
-    const bool knownServer = argc > 3 && strcmp(argv[3], "known") == 0;
     uint32_t lastTick = GetTickCount();
-    std::string pinned;
 
     for (;;) {
         fd_set readable;
@@ -104,12 +102,6 @@ int main(int argc, char** argv) {
                     const SOCKET server = peer->server;
                     SecureClient::Callbacks callbacks;
                     callbacks.send = [server](const uint8_t* bytes, int len) { send(server, reinterpret_cast<const char*>(bytes), len, 0); };
-                    callbacks.acceptServerKey = [&pinned](const uint8_t bytes[32]) {
-                        const std::string candidate(reinterpret_cast<const char*>(bytes), 32);
-                        if (pinned.empty()) pinned = candidate;
-                        return pinned == candidate;
-                    };
-                    callbacks.isKnownServer = [&pinned, knownServer]() { return knownServer || !pinned.empty(); };
                     callbacks.onMessage = [](const std::string& xml) { printf("server message: %.200s\n", xml.c_str()); };
                     callbacks.log = [](const char* text) { printf("client: %s\n", text); };
                     peer->client.reset(new SecureClient(secret, ephemeral, callbacks));

@@ -109,11 +109,6 @@ void SecureClient::Tick(uint32_t nowMs) {
     if (m_state == State::Handshaking) {
         const uint32_t elapsed = nowMs - m_startedAt;
         if (!m_serverAnswered && elapsed >= SILENT_SERVER_MS) {
-            if (m_callbacks.isKnownServer()) {
-                // Falling back here would let anyone who can block a few packets read the password.
-                Fail("A server that used encryption before isn't answering. Not falling back to plaintext.");
-                return;
-            }
             m_state = State::Plaintext;
             if (m_callbacks.log) m_callbacks.log("This server doesn't support encryption. Using the game's plaintext protocol.");
             FlushQueuedPackets(nowMs);
@@ -204,11 +199,6 @@ void SecureClient::OnServerHello(const uint8_t* data, int len, uint32_t nowMs) {
     memcpy(message, "OPS1-server", 11);
     memcpy(message + 11, transcript, 64);
     if (crypto_ed25519_check(signature, serverKey, message, sizeof(message)) != 0) return; // forged: keep waiting for the real one
-
-    if (!m_callbacks.acceptServerKey(serverKey)) {
-        Fail("THIS SERVER'S IDENTITY CHANGED. Refusing to connect. If the server was reinstalled, remove its line from known_servers.txt.");
-        return;
-    }
 
     uint8_t shared[32];
     crypto_x25519(shared, m_ephemeralSecret, serverEphemeral);
