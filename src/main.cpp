@@ -13,7 +13,7 @@
 
 discord::Core *discordCore = nullptr;
 
-const std::string version = "7.3";
+const std::string version = "7.4";
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
                       LPVOID lpReserved) {
