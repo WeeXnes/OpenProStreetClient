@@ -16,6 +16,7 @@ set(CLIENT_SOURCES
     src/game/car.cpp
     src/game/car_lock.cpp
     src/game/hooks.cpp
+    src/game/input_focus.cpp
     src/game/lanfix.cpp
     src/game/map.cpp
     src/game/quick_match.cpp

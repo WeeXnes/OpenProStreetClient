@@ -1,6 +1,7 @@
 #include "discord/discord_rpc.h"
 #include "game/borderless.h"
 #include "game/car_lock.h"
+#include "game/input_focus.h"
 #include "game/lanfix.h"
 #include "game/race_results.h"
 #include "game/tweaks.h"
@@ -14,7 +15,7 @@
 
 discord::Core *discordCore = nullptr;
 
-const std::string version = "8.0";
+const std::string version = "8.1";
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
                       LPVOID lpReserved) {
@@ -45,6 +46,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
     Borderless::Init(baseModule);
     RaceResults::Init(baseModule);
     CarLock::Init(baseModule);
+    InputFocus::Init(baseModule);
 
     HANDLE hThread = CreateThread(NULL, 0, RpcThread, NULL, 0, NULL);
     if (hThread) {

@@ -6,7 +6,7 @@
 namespace Tweaks
 {
     // The game reads one byte per character, so the copyright sign has to be its single Latin-1 byte.
-    static const char* g_customCopyrightString = "\xA9 2007 Electronic Arts Inc. All rights reserved.^OpenProStreet v8.0 by WeeXnes";
+    static const char* g_customCopyrightString = "\xA9 2007 Electronic Arts Inc. All rights reserved.^OpenProStreet v8.1 by WeeXnes";
     static uintptr_t g_loc_595859 = 0;
 
     static void PatchMemory(uintptr_t address, const void* data, size_t size)
