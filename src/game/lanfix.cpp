@@ -62,9 +62,14 @@ namespace LANFix
     // Opening the LAN menu, the game broadcasts for a server, and only shows the address screen if
     // none answers. A broadcast can't reach a server over the internet or a VPN. With an address in
     // the settings, this connects there instead, so the game carries on as if the search found it.
+    //
+    // This is netcodeConnectionSystemImpl::BeginConnect, which the game calls again for each later
+    // step of connecting. Only the first call, in state 0 (+0x04), starts a search. Later ones move
+    // the handshake on (0x81FFDB), and connecting again there fails with "ConnectionNotReady".
     static void __attribute__((thiscall)) FindLanServerHook(void* connectionSystem)
     {
-        if (g_serverAddress.empty()) {
+        const int state = *reinterpret_cast<int*>(static_cast<char*>(connectionSystem) + 4);
+        if (g_serverAddress.empty() || state != 0) {
             reinterpret_cast<FindLanServerFn>(g_origFindLanServer)(connectionSystem);
             return;
         }

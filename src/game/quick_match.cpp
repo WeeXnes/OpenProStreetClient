@@ -63,6 +63,7 @@ namespace QuickMatch
         uint32_t laps;
         uint32_t heats;
         uint32_t maxLaps; // above 1 when the player may choose the lap count
+        int raceNameId;   // tells a 1/4 mile drag from a 1/2 mile one
     };
 
     // Every event the menus would offer, by location, from the game's own data. An empty result
@@ -84,6 +85,7 @@ namespace QuickMatch
         EventValueFn eventMode = reinterpret_cast<EventValueFn>(base + 0x282590);
         EventValueFn eventHeats = reinterpret_cast<EventValueFn>(base + 0x257C90);
         EventValueFn eventLaps = reinterpret_cast<EventValueFn>(base + 0x257CF0);
+        EventValueFn eventRaceName = reinterpret_cast<EventValueFn>(base + 0x257CC0); // the drag distance
         ModeCategoryFn modeCategory = reinterpret_cast<ModeCategoryFn>(base + 0x257EC0);
 
         std::set<uint32_t> seen;
@@ -109,6 +111,7 @@ namespace QuickMatch
                 choice.mode = mode;
                 choice.heats = eventHeats(event);
                 choice.laps = eventLaps(event);
+                choice.raceNameId = static_cast<int>(eventRaceName(event));
                 if (choice.heats < 1) choice.heats = 1;
                 if (choice.laps < 1) choice.laps = 1;
                 // 0x579409: without several heats, some events let the player pick the laps.
@@ -180,7 +183,7 @@ namespace QuickMatch
             firstLocation = false;
             for (size_t i = 0; i < location->second.size(); ++i) {
                 const EventChoice& event = location->second[i];
-                std::string modeName = RaceModeName(event.mode);
+                std::string modeName = RaceModeName(event.mode, event.raceNameId);
                 if (modeName.empty()) modeName = "Mode " + std::to_string(event.mode);
                 fprintf(f, "%s{\"key\":%u,\"name\":\"%s %u\",\"mode\":%d,\"modeName\":\"%s\",\"laps\":%u,\"heats\":%u,\"maxLaps\":%u}",
                         i == 0 ? "" : ",\n", event.key, modeName.c_str(), static_cast<unsigned>(i + 1), event.mode, modeName.c_str(), event.laps, event.heats, event.maxLaps);

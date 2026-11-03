@@ -30,7 +30,7 @@ static std::string TranslateRaceModeId(int8_t modeId) {
         case 5:
             return "Time Attack";
         case 6:
-            return "1/2 Mile Drag";
+            return "Drag"; // the distance isn't part of the mode: see DragName
         case 7:
             return "Wheelie Competition";
         case 8:
@@ -44,8 +44,22 @@ static std::string TranslateRaceModeId(int8_t modeId) {
     }
 }
 
-std::string RaceModeName(int mode) {
-    return mode >= 0 && mode < 36 ? TranslateRaceModeId(static_cast<int8_t>(mode)) : "";
+// Every drag event has the same mode. Its race name, attribute 0xDB89AB5C of the event, says
+// how far it runs: RACE_NAME_001 is "1/4 Mile Drag" and RACE_NAME_002 is "1/2 Mile Drag".
+static std::string DragName(int raceNameId) {
+    switch (raceNameId) {
+        case 1:
+            return "1/4 Mile Drag";
+        case 2:
+            return "1/2 Mile Drag";
+        default:
+            return "Drag";
+    }
+}
+
+std::string RaceModeName(int mode, int raceNameId) {
+    const std::string name = mode >= 0 && mode < 36 ? TranslateRaceModeId(static_cast<int8_t>(mode)) : "";
+    return name == "Drag" ? DragName(raceNameId) : name;
 }
 
 static std::string g_lastKnownRaceMode = "";
@@ -73,6 +87,10 @@ std::string ReadRaceMode(uintptr_t baseModule) {
                 if (eventData != 0 && IsBadReadPtr((void*)(eventData + 0x23), 1) == 0) {
                     int8_t raceModeId = *(int8_t*)(eventData + 0x23);
                     std::string mode = TranslateRaceModeId(raceModeId);
+                    // The race name id, from the builder at 0x6908C0.
+                    if (mode == "Drag" && IsBadReadPtr((void*)(eventData + 0x1C), sizeof(int16_t)) == 0) {
+                        mode = DragName(*(int16_t*)(eventData + 0x1C));
+                    }
                     if (!mode.empty()) {
                         g_lastKnownRaceMode = mode;
                         return mode;
