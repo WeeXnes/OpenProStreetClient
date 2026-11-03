@@ -287,7 +287,10 @@ std::string ReadRawCarIdentifier(uintptr_t baseModule) {
     if (carHandle == INVALID_CAR_HANDLE) {
         return "";
     }
+    return CarModelForHandle(baseModule, carHandle);
+}
 
+std::string CarModelForHandle(uintptr_t baseModule, uint32_t carHandle) {
     // UserProfile (0xAB0EAC) +0x240 is the FEPlayerCarDB record table.
     uintptr_t profileBase = baseModule + 0x6B0EAC;
     if (IsBadReadPtr((void*)profileBase, sizeof(uintptr_t))) {

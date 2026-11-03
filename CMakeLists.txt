@@ -14,6 +14,7 @@ set(CLIENT_SOURCES
     src/discord/discord_rpc.cpp
     src/game/borderless.cpp
     src/game/car.cpp
+    src/game/car_lock.cpp
     src/game/hooks.cpp
     src/game/lanfix.cpp
     src/game/map.cpp

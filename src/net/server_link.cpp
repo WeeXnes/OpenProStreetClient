@@ -13,6 +13,7 @@
 #include <sstream>
 
 #include "net/secure_client.h"
+#include "game/car_lock.h"
 #include "log.h"
 
 extern const std::string version;
@@ -92,9 +93,28 @@ namespace ServerLink
         return xml.str();
     }
 
+    // A parameter as the server writes it: "<name> NAME </name><value> VALUE </value>".
+    static std::string ParamValue(const std::string& xml, const std::string& name) {
+        const std::string start = "<name> " + name + " </name><value>";
+        const size_t at = xml.find(start);
+        if (at == std::string::npos) return "";
+        const size_t from = at + start.size();
+        const size_t to = xml.find("</value>", from);
+        if (to == std::string::npos) return "";
+        std::string value = xml.substr(from, to - from);
+        const size_t first = value.find_first_not_of(' ');
+        const size_t last = value.find_last_not_of(' ');
+        return first == std::string::npos ? "" : value.substr(first, last - first + 1);
+    }
+
     static void OnServerMessage(const std::string& xml) {
         if (xml.find("<error>") != std::string::npos) {
             Log::Warn("The server refused a request: %s\n", Log::Highlight(xml.substr(0, 300)).c_str());
+            return;
+        }
+        // Sent on joining a room: the race day's allowed cars, or nothing for every car.
+        if (xml.find("<method> allowedCars") != std::string::npos) {
+            CarLock::SetAllowedCars(ParamValue(xml, "cars"));
         }
     }
 
@@ -244,6 +264,7 @@ namespace ServerLink
         callbacks.onMessage = [](const std::string& xml) { OnServerMessage(xml); };
         callbacks.log = [](const char* text) { Log::Event(Log::Tag::Server, "%s\n", text); };
 
+        CarLock::SetAllowedCars(""); // a new connection starts outside any room
         g_client.reset(new SecureClient(g_identity, ephemeral, callbacks));
         g_client->Begin(GetTickCount());
         std::vector<std::pair<std::string, std::string> > params;
