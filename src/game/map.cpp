@@ -62,7 +62,7 @@ static uint32_t StringHash32(const std::string& text) {
 
 std::string MapNameForKey(uint32_t key) {
     for (const auto& entry : MAP_TRANSLATION_TABLE) {
-        if (StringHash32(entry.first) == key) return entry.second;
+        if (StringHash32("tracks/" + entry.first) == key) return entry.second;
     }
     return "";
 }
