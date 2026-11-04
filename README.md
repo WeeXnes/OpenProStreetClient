@@ -49,9 +49,9 @@ This plugin was developed for the **v1.1 (Europe) "Battery 1.1 nocdfix"** execut
 3. **If you're upgrading from ProStreetRPC, delete `scripts/ProStreetRPC.asi`.** Running both would hook the game twice.
 4. Ensure Discord is running and launch NFS ProStreet!
 
-### Your identity
+### Your account
 
-The first time the game starts, the plugin creates `%LOCALAPPDATA%\OpenProStreet\identity.key`. This file is what logs you in to your account, so back it up, and never share it. To play from another PC, copy it there.
+Your name and password log you in, from any PC with the plugin. The plugin also keeps a key in `%LOCALAPPDATA%\OpenProStreet\identity.key` for the encrypted login. It's created on its own, and you don't need to copy it to another PC.
 
 ### Choosing a server
 
