@@ -34,7 +34,9 @@ Pre-compiled release bundles (`OpenProStreetClient_v*.zip`) containing the ASI p
 This plugin was developed for the **v1.1 (Europe) "Battery 1.1 nocdfix"** executable layout.
 
 - **Compatibility**: Battery No-CD fix is recommended for exact memory address offset resolution.
-- **ASI Loader**: Requires an ASI loader (such as the one included in **Multifix 1.1**) to auto-load plugins from the `scripts` folder.
+- **Game version**: Requires NFS ProStreet updated to version **1.1**.
+- **XNFSPS MultiFix**: Required. It also loads plugins from the `scripts` folder.
+- **Fusion Fix**: Not compatible. Remove it before installing.
 - **Disclaimer**: This project does not promote software piracy; ownership of a legitimate copy of the game is expected.
 
 ---
@@ -43,8 +45,7 @@ This plugin was developed for the **v1.1 (Europe) "Battery 1.1 nocdfix"** execut
 
 1. Download the latest release from [weexnes.dev Artifacts](https://weexnes.dev/project/OpenProStreetClient#artifacts).
 2. Extract the archive contents:
-   - Place `OpenProStreetClient.asi` into your NFS ProStreet `scripts/` directory (`<prostreet-root>/scripts/OpenProStreetClient.asi`).
-   - Place `discord_game_sdk.dll` into your main NFS ProStreet root directory (where `nfs.exe` is located).
+   - Place `OpenProStreetClient.asi` and `discord_game_sdk.dll` into your NFS ProStreet `scripts/` directory (`<prostreet-root>/scripts/`).
 3. **If you're upgrading from ProStreetRPC, delete `scripts/ProStreetRPC.asi`.** Running both would hook the game twice.
 4. Ensure Discord is running and launch NFS ProStreet!
 
