@@ -44,10 +44,20 @@ namespace CarLock
         {0x3F5D9C, {0x8A, 0x95, 0x18, 0x01, 0x00, 0x00, 0x8B, 0x4C, 0x24, 0x1C}, 0x3F5E3E, 0x3F5DA6},
     };
 
+    // In the backup loop, 0x7F5D8F loads the car's handle, and 0x7F5D93 skips the car its slot
+    // already holds. Patched so that skip can be turned off.
+    static const uintptr_t BACKUP_OWN_CAR = 0x3F5D8F;
+    static const uint8_t BACKUP_OWN_CAR_START[] = {0x8B, 0x7C, 0x24, 0x50, 0x3B, 0x78, 0x38, 0x0F, 0x84, 0xA2, 0x00, 0x00, 0x00};
+    static const uintptr_t BACKUP_NEXT_CAR = 0x3F5E3E;
+    static const uintptr_t BACKUP_CHECK_TABS = 0x3F5D9C;
+
     static uintptr_t g_baseModule = 0;
     static std::mutex g_lock;
     static std::set<std::string> g_allowed;
     static bool g_showAll = false; // set when none of the player's cars is allowed
+    // Set when the player has only one allowed car: it's then offered as the backup car too, instead
+    // of every car. The patched loop reads it, so it's a plain byte.
+    static volatile uint8_t g_backupSameCar = 0;
 
     void SetAllowedCars(const std::string& models) {
         std::set<std::string> allowed;
@@ -63,6 +73,7 @@ namespace CarLock
         }
         g_allowed.swap(allowed);
         g_showAll = false;
+        g_backupSameCar = 0;
     }
 
     // A car whose model isn't known stays, so a gap in the car table never hides a car the server
@@ -91,31 +102,46 @@ namespace CarLock
         return tabs;
     }
 
+    static bool ChoosingBackup(uintptr_t self) {
+        return *reinterpret_cast<uint8_t*>(self + 0xCC) >= *reinterpret_cast<uint8_t*>(self + 0xCD);
+    }
+
     static uint8_t AvailableTabs(uintptr_t self) {
         const uint8_t current = *reinterpret_cast<uint8_t*>(self + 0xCC);
-        const uint8_t count = *reinterpret_cast<uint8_t*>(self + 0xCD);
         const uintptr_t slots = *reinterpret_cast<uintptr_t*>(self + SLOTS);
-        if (current < count) {
+        if (!ChoosingBackup(self)) {
             return SlotTabs(slots + current * SLOT_SIZE, *reinterpret_cast<uint32_t*>(self + EXCLUDED_CAR));
         }
-        // The backup car comes from any slot with a car to spare, other than the one it holds.
+        // The backup car comes from any slot with a car to spare, other than the one it holds, or
+        // that one too when it's the player's only allowed car.
         uint8_t tabs = 0;
         const uintptr_t end = *reinterpret_cast<uintptr_t*>(self + SLOTS_END);
         for (uintptr_t slot = slots; slot != end; slot += SLOT_SIZE) {
             const uintptr_t cars = (*reinterpret_cast<uintptr_t*>(slot + 0x0C) - *reinterpret_cast<uintptr_t*>(slot + 0x08)) / 0x20;
-            if (cars >= 2) tabs |= SlotTabs(slot, *reinterpret_cast<uint32_t*>(slot + 0x38));
+            if (cars >= 2) tabs |= SlotTabs(slot, g_backupSameCar ? 0 : *reinterpret_cast<uint32_t*>(slot + 0x38));
         }
         return tabs;
     }
 
     // Replaces 0x7E1C20, so a tab with no allowed car isn't offered: picking from an empty tab hangs
-    // the game. If no car at all is allowed, the screen shows every car, and the server's chat message
-    // says which ones can race.
+    // the game. A player with one allowed car gets it as their backup car too. If no car at all is
+    // allowed, the screen shows every car, and the server's chat message says which ones can race.
     static uint8_t __attribute__((thiscall)) AvailableTabsHook(void* self) {
         std::lock_guard<std::mutex> lock(g_lock);
+        const uintptr_t screen = reinterpret_cast<uintptr_t>(self);
         g_showAll = false;
-        const uint8_t tabs = AvailableTabs(reinterpret_cast<uintptr_t>(self));
+        g_backupSameCar = 0;
+        uint8_t tabs = AvailableTabs(screen);
         if (tabs != 0 || g_allowed.empty()) return tabs;
+        if (ChoosingBackup(screen)) {
+            g_backupSameCar = 1;
+            tabs = AvailableTabs(screen);
+            if (tabs != 0) {
+                Log::Event(Log::Tag::Client, "you have one car this race day allows, so it's your backup car too\n");
+                return tabs;
+            }
+            g_backupSameCar = 0;
+        }
         Log::Event(Log::Tag::Client, "none of your cars is allowed in this race day, so all of them are shown\n");
         g_showAll = true;
         return AvailableTabs(reinterpret_cast<uintptr_t>(self));
@@ -160,10 +186,34 @@ namespace CarLock
         PatchJump(site, reinterpret_cast<uintptr_t>(stub), sizeof(patch.original));
     }
 
+    // Replaces the backup loop's own car check: with g_backupSameCar set, the slot's own car is
+    // offered too, and goes on to the tab check like any other.
+    static void PatchBackupOwnCar(uint8_t*& stubs) {
+        const uintptr_t site = g_baseModule + BACKUP_OWN_CAR;
+        uint8_t* p = stubs;
+        uint8_t* stub = p;
+        *p++ = 0x8B; *p++ = 0x7C; *p++ = 0x24; *p++ = 0x50;     // mov edi,[esp+0x50]: the car's handle
+        *p++ = 0x80; *p++ = 0x3D;                                // cmp byte [g_backupSameCar],0
+        *reinterpret_cast<uint32_t*>(p) = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(&g_backupSameCar));
+        p += 4;
+        *p++ = 0x00;
+        *p++ = 0x0F; *p++ = 0x85;                                // jne: offer the slot's own car too
+        *reinterpret_cast<int32_t*>(p) = static_cast<int32_t>((g_baseModule + BACKUP_CHECK_TABS) - (reinterpret_cast<uintptr_t>(p) + 4));
+        p += 4;
+        *p++ = 0x3B; *p++ = 0x78; *p++ = 0x38;                   // cmp edi,[eax+0x38]: the slot's own car
+        *p++ = 0x0F; *p++ = 0x84;                                // je next car
+        *reinterpret_cast<int32_t*>(p) = static_cast<int32_t>((g_baseModule + BACKUP_NEXT_CAR) - (reinterpret_cast<uintptr_t>(p) + 4));
+        p += 4;
+        p = WriteJump(p, 0xE9, g_baseModule + BACKUP_CHECK_TABS);
+        stubs = p;
+        PatchJump(site, reinterpret_cast<uintptr_t>(stub), sizeof(BACKUP_OWN_CAR_START));
+    }
+
     void Init(uintptr_t baseModule) {
         g_baseModule = baseModule;
         bool expected = Matches(baseModule + AVAILABLE_TABS, AVAILABLE_TABS_START, sizeof(AVAILABLE_TABS_START)) &&
-                        Matches(baseModule + BOTH_TABS, BOTH_TABS_START, sizeof(BOTH_TABS_START));
+                        Matches(baseModule + BOTH_TABS, BOTH_TABS_START, sizeof(BOTH_TABS_START)) &&
+                        Matches(baseModule + BACKUP_OWN_CAR, BACKUP_OWN_CAR_START, sizeof(BACKUP_OWN_CAR_START));
         for (const ListPatch& patch : LIST_PATCHES) {
             expected = expected && Matches(baseModule + patch.site, patch.original, sizeof(patch.original));
         }
@@ -172,9 +222,10 @@ namespace CarLock
             return;
         }
 
-        uint8_t* stubs = static_cast<uint8_t*>(VirtualAlloc(nullptr, 128, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+        uint8_t* stubs = static_cast<uint8_t*>(VirtualAlloc(nullptr, 256, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
         if (!stubs) return;
         for (const ListPatch& patch : LIST_PATCHES) PatchList(stubs, patch);
+        PatchBackupOwnCar(stubs);
         PatchJump(baseModule + AVAILABLE_TABS, reinterpret_cast<uintptr_t>(&AvailableTabsHook), sizeof(AVAILABLE_TABS_START));
         // Career cars first whenever both tabs have some: bonus cars only matter in challenge race days.
         PatchJump(baseModule + BOTH_TABS, baseModule + PICK_CAREER, sizeof(BOTH_TABS_START));
