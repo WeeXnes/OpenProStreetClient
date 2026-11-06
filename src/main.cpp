@@ -15,7 +15,32 @@
 
 discord::Core *discordCore = nullptr;
 
-const std::string version = "8.2";
+const std::string version = "8.3";
+
+// Every hook patches nfs.exe v1.1 at fixed addresses, so the client only runs on that layout. The
+// game's version check pushes 1, 1 here (MultiFix reads the same bytes). A packed exe, such as the
+// "Vitality" 1.1 No-CD, still has its code compressed when plugins load, so this reads as zero.
+static const uintptr_t VERSION_MARKER = 0x2CC3A6;
+static const uint32_t VERSION_MARKER_V11 = 0x016A016A;
+
+static bool IsSupportedGame(uintptr_t baseModule) {
+  const void* marker = reinterpret_cast<const void*>(baseModule + VERSION_MARKER);
+  return !IsBadReadPtr(marker, sizeof(uint32_t)) &&
+         *reinterpret_cast<const uint32_t*>(marker) == VERSION_MARKER_V11;
+}
+
+// A message box can't open while the loader holds its lock, so it gets its own thread.
+static DWORD WINAPI UnsupportedGameNotice(LPVOID) {
+  MessageBoxA(nullptr,
+              "This nfs.exe isn't supported, so the OpenProStreet client is turned off.\n\n"
+              "The client needs the unpacked version 1.1 of nfs.exe. This one is either another "
+              "version or packed (like the \"Vitality\" 1.1 No-CD), so the game's code isn't "
+              "where the client expects it. XNFSPS MultiFix doesn't work with it either, which is "
+              "why settings like the resolution don't stick.\n\n"
+              "See https://ops.weexnes.dev/guide for what you need.",
+              "OpenProStreet", MB_OK | MB_ICONWARNING | MB_TOPMOST);
+  return 0;
+}
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
                       LPVOID lpReserved) {
@@ -38,6 +63,14 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
     DisableThreadLibraryCalls(hModule);
 
     uintptr_t baseModule = (uintptr_t)GetModuleHandle(NULL);
+
+    if (!IsSupportedGame(baseModule)) {
+      Log::Error("This nfs.exe isn't the unpacked version 1.1 the client is made for. "
+                 "The client is turned off and changes nothing in the game.\n");
+      HANDLE notice = CreateThread(NULL, 0, UnsupportedGameNotice, NULL, 0, NULL);
+      if (notice) CloseHandle(notice);
+      return TRUE;
+    }
 
     ServerLink::Init(baseModule);
     LANFix::Init();

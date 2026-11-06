@@ -34,6 +34,7 @@ Pre-compiled release bundles (`OpenProStreetClient_v*.zip`) containing the ASI p
 This plugin was developed for the **v1.1 (Europe) "Battery 1.1 nocdfix"** executable layout.
 
 - **Compatibility**: Battery No-CD fix is recommended for exact memory address offset resolution.
+- **Packed executables**: Not supported, for example the "Vitality" 1.1 No-CD (3.7 MB, MD5 `15082baf8bb09b3298768c9b5c2b946e`). Its code is still compressed when plugins load, so neither this client nor XNFSPS MultiFix can patch it, and settings like the resolution won't stick. The client detects this, shows a message and stays off.
 - **Game version**: Requires NFS ProStreet updated to version **1.1**.
 - **XNFSPS MultiFix**: Required. It also loads plugins from the `scripts` folder.
 - **Fusion Fix**: Not compatible. Remove it before installing.
