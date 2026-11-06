@@ -25,6 +25,8 @@ Pre-compiled release bundles (`OpenProStreetClient_v*.zip`) containing the ASI p
 - **Detailed Stats**: Shows your current career balance and Raceday XP (formatted with commas).
 - **Map Identification**: Detects the current track/map and translates internal identifiers to human-readable names (e.g. "Nevada Highway", "Chicago Airfield").
 - **Dynamic Cycle**: Automatically cycles Discord details line between track name, race type, current car, and Raceday XP during gameplay.
+- **Car Fixes Built In**: No tank slapper and no speed limiter on any car, the same changes the NFS-VltEd scripts "Tank Unslapper" and "Speed Limiter Removed" make, without VltEd. See [Car fixes](#car-fixes).
+- **Main Menu**: The "LAN Play" button reads "OpenProStreet" in every language, and the copyright line shows the client version.
 - **Safe Memory Management**: Validates pointers and handles memory reading safely to prevent game crashes.
 
 ---
@@ -76,6 +78,25 @@ Borderless=1
 ```
 
 The game keeps running when you tab out. Set its resolution to your monitor's for the sharpest picture, because other resolutions are stretched to fit.
+
+### Car fixes
+
+The client changes these values while the game loads `GLOBAL\ATTRIBUTES.BIN`:
+
+- **No tank slapper:** each car's `TANK_SLAPPER_TIMER` is set to 0, so cars don't start weaving at high speed.
+- **No speed limiter:** both `SPEED_LIMITER` values on each car are set to 900, so a car's top speed comes from its engine and gearing.
+- **No camera vibration:** `Enable` is set to false in every `cameravibration` preset (`default`, `bumperhood`, `close`, `far`, `staging`).
+
+These are the same edits as the NFS-VltEd scripts "Tank Unslapper" and "Speed Limiter Removed" and turning off camera vibration in VltEd, so you don't need VltEd anymore. The file on disk isn't changed. If you already applied those scripts, nothing changes: values that are already set are left alone. Every player on a server should keep the two car fixes on, so cars behave the same for everyone. Camera vibration only changes your own view. To turn any of them off:
+
+```ini
+[Physics]
+NoTankSlapper=0
+NoSpeedLimiter=0
+
+[Display]
+NoCameraVibration=0
+```
 
 ### Writing a server's event catalog
 

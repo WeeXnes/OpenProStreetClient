@@ -6,7 +6,11 @@
 namespace Tweaks
 {
     // The game reads one byte per character, so the copyright sign has to be its single Latin-1 byte.
-    static const char* g_customCopyrightString = "\xA9 2007 Electronic Arts Inc. All rights reserved.^OpenProStreet v8.1 by WeeXnes";
+    // SetVersion fills in the client's version before the hook is installed.
+    static char g_copyrightBuffer[128] = "\xA9 2007 Electronic Arts Inc. All rights reserved.^OpenProStreet by WeeXnes";
+    static const char* g_customCopyrightString = g_copyrightBuffer;
+    // The main menu's "LAN Play" button (LAN_LAN_PLAY, the same ID in every language) shows this instead.
+    static const char* g_lanButtonString = "OpenProStreet";
     static uintptr_t g_loc_595859 = 0;
 
     static void PatchMemory(uintptr_t address, const void* data, size_t size)
@@ -38,19 +42,33 @@ namespace Tweaks
     {
         __asm__ __volatile__(
             "movl (%%edi,%%eax,8), %%edx\n\t"
-            "cmpl $0xA7EBC389, %%edx\n\t"
+            // Each entry of the game's text table is {ID, text pointer}. A matching ID gets our text.
+            "cmpl $0xA7EBC389, %%edx\n\t"   // the main menu's copyright line
             "jne 1f\n\t"
             "pushl %%ecx\n\t"
             "movl %0, %%ecx\n\t"
             "movl %%ecx, 4(%%edi,%%eax,8)\n\t"
             "popl %%ecx\n\t"
             "1:\n\t"
+            "cmpl $0xF6BC1F49, %%edx\n\t"   // LAN_LAN_PLAY
+            "jne 2f\n\t"
+            "pushl %%ecx\n\t"
+            "movl %2, %%ecx\n\t"
+            "movl %%ecx, 4(%%edi,%%eax,8)\n\t"
+            "popl %%ecx\n\t"
+            "2:\n\t"
             "cmpl %%esi, %%edx\n\t"
             "pushl %1\n\t"
             "ret\n\t"
             :
-            : "m"(g_customCopyrightString), "m"(g_loc_595859)
+            : "m"(g_customCopyrightString), "m"(g_loc_595859), "m"(g_lanButtonString)
         );
+    }
+
+    void SetVersion(const char* version)
+    {
+        snprintf(g_copyrightBuffer, sizeof(g_copyrightBuffer),
+                 "\xA9 2007 Electronic Arts Inc. All rights reserved.^OpenProStreet v%s by WeeXnes", version);
     }
 
     static void InstallCopyrightStringHook(uintptr_t baseModule)
