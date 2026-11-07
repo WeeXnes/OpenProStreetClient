@@ -1,4 +1,4 @@
-# OpenProStreet Client
+# <img src="assets/openprostreet.svg" width="36" height="36" align="top" alt=""> OpenProStreet Client
 
 > The game plugin for [OpenProStreet](https://code.weexnes.dev/OpenProStreet) servers, for Need for Speed: ProStreet. Formerly ProStreetRPC.
 
