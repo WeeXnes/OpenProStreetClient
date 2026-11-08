@@ -306,6 +306,8 @@ namespace ServerLink
         params.push_back(std::make_pair(std::string("score"), FormatFloat(report.score)));
         params.push_back(std::make_pair(std::string("laps"), std::to_string(report.lapsCompleted)));
         params.push_back(std::make_pair(std::string("lap_times"), laps));
+        if (!report.gameFiles.empty()) params.push_back(std::make_pair(std::string("game_files"), report.gameFiles));
+        if (!report.speedLimit.empty()) params.push_back(std::make_pair(std::string("speed_limit"), report.speedLimit));
 
         Lock lock;
         if (g_client && g_client->GetState() == SecureClient::State::Established) {

@@ -2,9 +2,12 @@
 
 #include <windows.h>
 
+#include <monocypher.h>
+
 #include <cstring>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "log.h"
 
@@ -21,7 +24,7 @@ namespace VaultFixes
     static const uint32_t FIELD_SPEED_LIMITER = 0xA2D9ECB4;      // an array of 2 floats
     static const uint32_t CLASS_CAMERA_VIBRATION = 0xE3C144F9;   // "cameravibration"
     static const uint32_t FIELD_ENABLE = 0x3D460262;             // "Enable", a bool in each preset's layout
-    static const uint32_t TYPE_CLASS =0x5E970CBC;               // "Attrib::ClassLoadData"
+    static const uint32_t TYPE_CLASS = 0x5E970CBC;               // "Attrib::ClassLoadData"
     static const uint32_t TYPE_COLLECTION = 0x8E112EB7;          // "Attrib::CollectionLoadData"
     static const float NO_SPEED_LIMIT = 900.0f;                  // what the "Speed Limiter Removed" script sets
 
@@ -30,6 +33,8 @@ namespace VaultFixes
     static bool g_tankSlapper = true;
     static bool g_speedLimiter = true;
     static bool g_cameraVibration = true;
+    static std::string g_filesHash;
+    static const char* g_speedLimit = "";
 
     // A view of one vault's two blobs with bounds checks, since a modded file could be anything.
     struct Blob {
@@ -40,14 +45,25 @@ namespace VaultFixes
         uint16_t U16(uint32_t offset) const { uint16_t v; memcpy(&v, data + offset, 2); return v; }
     };
 
-    struct Counts { int tank = 0, speed = 0, cameras = 0, alreadyDone = 0; };
+    enum Kind { TANK, SPEED, CAMERA };
 
-    static void SetFloat(Blob& bin, uint32_t offset, float value, Counts& counts, int& changed) {
-        float current;
-        memcpy(&current, bin.data + offset, 4);
-        if (current == value) { ++counts.alreadyDone; return; }
-        memcpy(bin.data + offset, &value, 4);
-        ++changed;
+    // Every fix is made first, so the file's hash is the same for everyone with the same game data,
+    // whichever fixes they turned off and whether VltEd already made them. Fixes that are turned off
+    // are put back after hashing.
+    struct Change { uint8_t* at; uint8_t old[4]; uint8_t size; Kind kind; };
+
+    struct Counts { int alreadyDone = 0; std::vector<Change> changes; std::vector<uint8_t*> speedValues; };
+
+    static void Set(uint8_t* at, const void* value, uint8_t size, Kind kind, Counts& counts) {
+        if (memcmp(at, value, size) == 0) { ++counts.alreadyDone; return; }
+        Change change{at, {}, size, kind};
+        memcpy(change.old, at, size);
+        counts.changes.push_back(change);
+        memcpy(at, value, size);
+    }
+
+    static void SetFloat(Blob& bin, uint32_t offset, float value, Kind kind, Counts& counts) {
+        Set(bin.data + offset, &value, 4, kind, counts);
     }
 
     // One vault: a VLT index (chunks ExpN, PtrN, ...) and a BIN data blob. Exports point at class and
@@ -108,10 +124,9 @@ namespace VaultFixes
             // Every camera's vibration preset (default, bumperhood, close, far, staging): Enable = false.
             uint32_t layout;
             if (vlt.U32(at + 4) == CLASS_CAMERA_VIBRATION) {
-                if (g_cameraVibration && vibrationOffset != UINT32_MAX && binPointer(at + 28, layout) && bin.Has(layout + vibrationOffset, 1)) {
-                    uint8_t& enable = bin.data[layout + vibrationOffset];
-                    if (enable == 0) ++counts.alreadyDone;
-                    else { enable = 0; ++counts.cameras; }
+                if (vibrationOffset != UINT32_MAX && binPointer(at + 28, layout) && bin.Has(layout + vibrationOffset, 1)) {
+                    const uint8_t off = 0;
+                    Set(bin.data + layout + vibrationOffset, &off, 1, CAMERA, counts);
                 }
                 continue;
             }
@@ -121,10 +136,9 @@ namespace VaultFixes
             const uint32_t entriesAt = at + 32 + typesLen * 4;
             if (numEntries > 4096 || !vlt.Has(entriesAt, numEntries * 12)) continue;
 
-            if (g_tankSlapper && tankOffset != UINT32_MAX && binPointer(at + 28, layout) && bin.Has(layout + tankOffset, 4))
-                SetFloat(bin, layout + tankOffset, 0.0f, counts, counts.tank);
+            if (tankOffset != UINT32_MAX && binPointer(at + 28, layout) && bin.Has(layout + tankOffset, 4))
+                SetFloat(bin, layout + tankOffset, 0.0f, TANK, counts);
 
-            if (!g_speedLimiter) continue;
             for (uint32_t n = 0; n < numEntries; ++n) {
                 // {key, data or pointer, type index u16, node flags u8, entry flags u8}
                 const uint32_t entry = entriesAt + n * 12;
@@ -133,7 +147,10 @@ namespace VaultFixes
                 // An array starts with {allocated u16, count u16, element size u16, padding u16}.
                 const uint16_t used = bin.U16(array + 2), elementSize = bin.U16(array + 4);
                 if (elementSize != 4 || used > 8 || !bin.Has(array + 8, used * 4u)) continue;
-                for (uint16_t k = 0; k < used; ++k) SetFloat(bin, array + 8 + k * 4, NO_SPEED_LIMIT, counts, counts.speed);
+                for (uint16_t k = 0; k < used; ++k) {
+                    counts.speedValues.push_back(bin.data + array + 8 + k * 4);
+                    SetFloat(bin, array + 8 + k * 4, NO_SPEED_LIMIT, SPEED, counts);
+                }
             }
         }
     }
@@ -145,24 +162,66 @@ namespace VaultFixes
             Log::Warn("The game's attribute file isn't in the expected format. Car fixes are off.\n");
             return;
         }
-        uint32_t vaults;
+        uint32_t vaults, namesAt, namesSize;
         memcpy(&vaults, pack + 4, 4);
+        memcpy(&namesAt, pack + 8, 4);
+        memcpy(&namesSize, pack + 12, 4);
+        if (vaults > 16 || IsBadReadPtr(pack, 16 + vaults * 20)) return;
+
         Counts counts;
-        for (uint32_t v = 0; v < vaults && v < 16; ++v) {
+        crypto_blake2b_ctx hash;
+        crypto_blake2b_init(&hash, 32);
+        crypto_blake2b_update(&hash, pack, 16 + vaults * 20);
+        if (namesSize < (1u << 20) && !IsBadReadPtr(pack + namesAt, namesSize))
+            crypto_blake2b_update(&hash, pack + namesAt, namesSize);
+
+        std::vector<Blob> blobs;
+        for (uint32_t v = 0; v < vaults; ++v) {
             uint32_t entry[5];
             memcpy(entry, pack + 16 + v * 20, sizeof(entry));
             Blob bin{pack + entry[3], entry[1]}, vlt{pack + entry[4], entry[2]};
             if (IsBadWritePtr(bin.data, bin.size) || IsBadReadPtr(vlt.data, vlt.size)) continue;
             PatchVault(vlt, bin, counts);
+            blobs.push_back(bin);
+            blobs.push_back(vlt);
         }
+
+        // The hash covers the game data with every fix made, then the fixes turned off are undone.
+        for (const Blob& blob : blobs) crypto_blake2b_update(&hash, blob.data, blob.size);
+        uint8_t digest[32];
+        crypto_blake2b_final(&hash, digest);
+        static const char* hex = "0123456789abcdef";
+        g_filesHash.clear();
+        for (uint8_t b : digest) { g_filesHash += hex[b >> 4]; g_filesHash += hex[b & 15]; }
+
+        int tank = 0, speed = 0, cameras = 0;
+        for (const Change& change : counts.changes) {
+            const bool on = change.kind == TANK ? g_tankSlapper : change.kind == SPEED ? g_speedLimiter : g_cameraVibration;
+            if (!on) { memcpy(change.at, change.old, change.size); continue; }
+            ++(change.kind == TANK ? tank : change.kind == SPEED ? speed : cameras);
+        }
+        // What the game actually loads, so a file VltEd already changed counts too. Servers keep separate
+        // records for cars with and without the limiter.
+        bool anyLimited = false;
+        for (uint8_t* at : counts.speedValues) {
+            float value;
+            memcpy(&value, at, 4);
+            if (value < NO_SPEED_LIMIT) { anyLimited = true; break; }
+        }
+        g_speedLimit = counts.speedValues.empty() ? "" : anyLimited ? "limited" : "unlimited";
+
         Log::Event(Log::Tag::Client, "Car fixes: tank slapper off on %d cars, speed limiter off on %d values, vibration off on %d cameras (%d already set)\n",
-                   counts.tank, counts.speed, counts.cameras, counts.alreadyDone);
+                   tank, speed, cameras, counts.alreadyDone);
+        Log::Debug("[OpenProStreet] Game data hash: %s\n", g_filesHash.c_str());
     }
 
     static void* __cdecl LoadAttributesHook(void* pack, const char* name, int a, int b, int c) {
         PatchPack(static_cast<uint8_t*>(pack)); // every read and write is bounds-checked
         return g_loader(pack, name, a, b, c);
     }
+
+    const std::string& FilesHash() { return g_filesHash; }
+    const char* SpeedLimit() { return g_speedLimit; }
 
     void Init(uintptr_t baseModule) {
         const std::string& settings = Log::SettingsPath();
@@ -171,7 +230,7 @@ namespace VaultFixes
             g_speedLimiter = GetPrivateProfileIntA("Physics", "NoSpeedLimiter", 1, settings.c_str()) != 0;
             g_cameraVibration = GetPrivateProfileIntA("Display", "NoCameraVibration", 1, settings.c_str()) != 0;
         }
-        if (!g_tankSlapper && !g_speedLimiter && !g_cameraVibration) return;
+        // The hook stays in even with every fix off, because servers check the game data's hash.
 
         // Only patch a call that still goes where v1.1's does.
         uint8_t* call = reinterpret_cast<uint8_t*>(baseModule + CALL_LOAD_ATTRIBUTES);

@@ -20,6 +20,8 @@ namespace ServerLink
         float score = 0.0f;
         int lapsCompleted = 0;
         std::vector<float> lapTimes;
+        std::string gameFiles; // VaultFixes::FilesHash()
+        std::string speedLimit; // VaultFixes::SpeedLimit()
     };
 
     // Hooks the game's socket calls and loads the player's identity.

@@ -4,6 +4,7 @@
 #include "game/map.h"
 #include "game/car.h"
 #include "game/race_mode.h"
+#include "game/vault_fixes.h"
 #include "log.h"
 #include <cstdio>
 #include <ctime>
@@ -407,6 +408,8 @@ namespace RaceResults
         report.score = *(float*)(playerRacer + RACER_SCORE);
         report.lapsCompleted = *(int32_t*)(playerRacer + RACER_LAPS_COMPLETED);
         report.lapTimes = isDrag ? res.heatTimes : res.lapTimes;
+        report.gameFiles = VaultFixes::FilesHash();
+        report.speedLimit = VaultFixes::SpeedLimit();
         ServerLink::SubmitRaceResult(report);
     }
 

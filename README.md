@@ -87,7 +87,7 @@ The client changes these values while the game loads `GLOBAL\ATTRIBUTES.BIN`:
 - **No speed limiter:** both `SPEED_LIMITER` values on each car are set to 900, so a car's top speed comes from its engine and gearing.
 - **No camera vibration:** `Enable` is set to false in every `cameravibration` preset (`default`, `bumperhood`, `close`, `far`, `staging`).
 
-These are the same edits as the NFS-VltEd scripts "Tank Unslapper" and "Speed Limiter Removed" and turning off camera vibration in VltEd, so you don't need VltEd anymore. The file on disk isn't changed. If you already applied those scripts, nothing changes: values that are already set are left alone. Every player on a server should keep the two car fixes on, so cars behave the same for everyone. Camera vibration only changes your own view. To turn any of them off:
+These are the same edits as the NFS-VltEd scripts "Tank Unslapper" and "Speed Limiter Removed" and turning off camera vibration in VltEd, so you don't need VltEd anymore. The file on disk isn't changed. If you already applied those scripts, nothing changes: values that are already set are left alone. Camera vibration only changes your own view. To turn any of them off:
 
 ```ini
 [Physics]
@@ -97,6 +97,10 @@ NoSpeedLimiter=0
 [Display]
 NoCameraVibration=0
 ```
+
+You can race with or without the speed limiter on the same server. The client tells the server which one your cars have, and records are kept apart for each, so the leaderboards only compare like with like.
+
+The client also sends the server a hash of this file with each race result. The hash is taken with all three fixes made, so it's the same whether you turned a fix off or VltEd already made it. A server can use it to keep results from edited car data off its leaderboard.
 
 ### Writing a server's event catalog
 
