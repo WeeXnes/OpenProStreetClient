@@ -8,9 +8,22 @@ namespace Tweaks
     // The game reads one byte per character, so the copyright sign has to be its single Latin-1 byte.
     // SetVersion fills in the client's version before the hook is installed.
     static char g_copyrightBuffer[128] = "\xA9 2007 Electronic Arts Inc. All rights reserved.^OpenProStreet by WeeXnes";
-    static const char* g_customCopyrightString = g_copyrightBuffer;
-    // The main menu's "LAN Play" button (LAN_LAN_PLAY, the same ID in every language) shows this instead.
-    static const char* g_lanButtonString = "OpenProStreet";
+
+    // Game texts shown differently, by their ID in the language files (the same in every language).
+    // A zero ID ends the list.
+    struct TextReplacement { uint32_t id; const char* text; };
+    static TextReplacement g_textReplacements[] = {
+        { 0xA7EBC389, g_copyrightBuffer },                              // the main menu's copyright line
+        { 0xF6BC1F49, "OpenProStreet" },                                // LAN_LAN_PLAY, the main menu's "LAN Play"
+        { 0xEDD0BB02, "CREATE OPENPROSTREET ACCOUNT" },                 // "Create new LAN account"
+        { 0xEBF92CFC, "LOG IN TO OPENPROSTREET ACCOUNT" },              // "Use existing LAN account"
+        { 0x11B2D25A, "CREATE OPENPROSTREET ACCOUNT" },                 // "Create LAN account"
+        { 0x540D2A12, "Creating your OpenProStreet account..." },       // "Creating new LAN account..."
+        { 0x177BF6B1, "OpenProStreet account created." },               // "LAN account created successfully."
+        { 0x26CE18DD, "Couldn't create the OpenProStreet account." },   // "LAN account creation failed."
+        { 0, nullptr },
+    };
+    static TextReplacement* g_textReplacementList = g_textReplacements;
     static uintptr_t g_loc_595859 = 0;
 
     static void PatchMemory(uintptr_t address, const void* data, size_t size)
@@ -42,26 +55,31 @@ namespace Tweaks
     {
         __asm__ __volatile__(
             "movl (%%edi,%%eax,8), %%edx\n\t"
-            // Each entry of the game's text table is {ID, text pointer}. A matching ID gets our text.
-            "cmpl $0xA7EBC389, %%edx\n\t"   // the main menu's copyright line
-            "jne 1f\n\t"
+            // Each entry of the game's text table is {ID, text pointer}. An ID in our list gets our text.
             "pushl %%ecx\n\t"
+            "pushl %%ebx\n\t"
             "movl %0, %%ecx\n\t"
-            "movl %%ecx, 4(%%edi,%%eax,8)\n\t"
-            "popl %%ecx\n\t"
             "1:\n\t"
-            "cmpl $0xF6BC1F49, %%edx\n\t"   // LAN_LAN_PLAY
+            "movl (%%ecx), %%ebx\n\t"
+            "testl %%ebx, %%ebx\n\t"
+            "jz 3f\n\t"
+            "cmpl %%ebx, %%edx\n\t"
             "jne 2f\n\t"
-            "pushl %%ecx\n\t"
-            "movl %2, %%ecx\n\t"
-            "movl %%ecx, 4(%%edi,%%eax,8)\n\t"
-            "popl %%ecx\n\t"
+            "movl 4(%%ecx), %%ebx\n\t"
+            "movl %%ebx, 4(%%edi,%%eax,8)\n\t"
+            "jmp 3f\n\t"
             "2:\n\t"
+            "addl $8, %%ecx\n\t"
+            "jmp 1b\n\t"
+            "3:\n\t"
+            "popl %%ebx\n\t"
+            "popl %%ecx\n\t"
+            // The instruction the jump here replaced, with the flags the game's code goes on to use.
             "cmpl %%esi, %%edx\n\t"
             "pushl %1\n\t"
             "ret\n\t"
             :
-            : "m"(g_customCopyrightString), "m"(g_loc_595859), "m"(g_lanButtonString)
+            : "m"(g_textReplacementList), "m"(g_loc_595859)
         );
     }
 
@@ -82,7 +100,7 @@ namespace Tweaks
             *(uint8_t*)loc_595854 = 0xE9; // JMP rel32
             *(int32_t*)(loc_595854 + 1) = (int32_t)((uintptr_t)StringReplacementCodeCave - (loc_595854 + 5));
             VirtualProtect((void*)loc_595854, 5, oldProtect, &oldProtect);
-            Log::Debug("[OpenProStreet] Copyright string hook installed at 0x%p\n", (void*)loc_595854);
+            Log::Debug("[OpenProStreet] Text replacement hook installed at 0x%p\n", (void*)loc_595854);
         }
     }
 
