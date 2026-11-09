@@ -21,6 +21,8 @@ namespace Tweaks
         { 0x540D2A12, "Creating your OpenProStreet account..." },       // "Creating new LAN account..."
         { 0x177BF6B1, "OpenProStreet account created." },               // "LAN account created successfully."
         { 0x26CE18DD, "Couldn't create the OpenProStreet account." },   // "LAN account creation failed."
+        { 0x3D9D33D7, "OPENPROSTREET" },                                // "Select LAN login", the account screen's title
+        { 0xAD965973, "OPENPROSTREET" },                                // "LAN login"
         { 0, nullptr },
     };
     static TextReplacement* g_textReplacementList = g_textReplacements;
