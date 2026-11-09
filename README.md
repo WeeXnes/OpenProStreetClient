@@ -26,7 +26,7 @@ Pre-compiled release bundles (`OpenProStreetClient_v*.zip`) containing the ASI p
 - **Map Identification**: Detects the current track/map and translates internal identifiers to human-readable names (e.g. "Nevada Highway", "Chicago Airfield").
 - **Dynamic Cycle**: Automatically cycles Discord details line between track name, race type, current car, and Raceday XP during gameplay.
 - **Car Fixes Built In**: No tank slapper and no speed limiter on any car, the same changes the NFS-VltEd scripts "Tank Unslapper" and "Speed Limiter Removed" make, without VltEd. See [Car fixes](#car-fixes).
-- **Main Menu**: The "LAN Play" button reads "OpenProStreet" in every language, and the copyright line shows the client version.
+- **Main Menu**: The "LAN Play" button reads "OpenProStreet" in every language, the copyright line shows the client version, and the game no longer tries to log in to EA (the "Connecting to EA server..." popup you had to cancel).
 - **Safe Memory Management**: Validates pointers and handles memory reading safely to prevent game crashes.
 
 ---

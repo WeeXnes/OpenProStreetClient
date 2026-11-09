@@ -148,6 +148,28 @@ namespace Tweaks
         Log::Debug("[OpenProStreet] Tabbing out no longer ends the online session.\n");
     }
 
+    // When the main menu opens (FEMainStateManager, vtable slot 21 at 0x7D7E20), the game asks
+    // 0x7B9460 whether to log in to EA automatically, once per session. If so, it opens the EA login
+    // screen (FEPCOnlineLoginStateManager), which shows "Connecting to EA server..." until the player
+    // cancels it, since EA's servers are gone. 0x7B9460 already has a "no" path that also marks the
+    // attempt as made (0x7B9483), so its first instruction becomes a jump there. Logging in to EA
+    // Nation from the menu still works as before; OpenProStreet's LAN and Quick Play don't use it.
+    static void NoEaAutoLogin(uintptr_t baseModule)
+    {
+        // cmp byte [auto login flag], 0 ; je 0x7B9483
+        const uintptr_t check = baseModule + 0x3B9460;
+        const uint8_t* code = reinterpret_cast<const uint8_t*>(check);
+        if (code[0] != 0x80 || code[1] != 0x3D || code[6] != 0x00 || code[7] != 0x74 || code[8] != 0x1A ||
+            code[0x23] != 0xC6 || code[0x24] != 0x05)
+        {
+            Log::Debug("[OpenProStreet] EA auto login check not recognised, leaving it alone.\n");
+            return;
+        }
+        const uint8_t jump[] = { 0xEB, 0x21 }; // jmp short 0x7B9483
+        PatchMemory(check, jump, sizeof(jump));
+        Log::Debug("[OpenProStreet] The main menu no longer tries to log in to EA.\n");
+    }
+
     void Init(uintptr_t baseModule)
     {
         if (!baseModule) return;
@@ -156,5 +178,6 @@ namespace Tweaks
         InstallCopyrightStringHook(baseModule);
         KeepRunningWhileMinimized(baseModule);
         StayOnlineWithoutFocus(baseModule);
+        NoEaAutoLogin(baseModule);
     }
 }
