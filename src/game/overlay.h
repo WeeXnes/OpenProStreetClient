@@ -23,7 +23,7 @@ namespace Overlay
     };
 
     // Reads [Overlay] from the client's ini and hooks the display. Call before the game makes it.
-    void Init(uintptr_t baseModule);
+    void Init(uintptr_t baseModule, const std::string& version);
 
     // The game's state, from the client's polling thread. A new track or mode asks the server where
     // the player stands; outside a race the card is hidden.

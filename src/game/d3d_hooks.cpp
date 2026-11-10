@@ -100,7 +100,7 @@ namespace D3DHooks
         g_realDirect3DCreate = reinterpret_cast<Direct3DCreateFn>(real);
         PatchPointer(entry, reinterpret_cast<void*>(Direct3DCreateHook));
         g_installed = true;
-        Log::Debug("[OpenProStreet] Display hooks installed.\n");
+        Log::Event(Log::Tag::Client, "Display hooks installed\n");
         return true;
     }
 

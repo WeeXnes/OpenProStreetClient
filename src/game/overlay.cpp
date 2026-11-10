@@ -25,6 +25,8 @@ namespace Overlay
     static bool g_notices = true;
     static Corner g_corner = TopRight;
     static float g_userScale = 1.0f;
+    static std::string g_version;
+    static bool g_drawnOnce = false;
 
     // ---- What to show, written by the game state and network threads, read when drawing ----
 
@@ -168,7 +170,14 @@ namespace Overlay
         QueryPerformanceCounter(&g_start);
         g_last = g_start;
         g_ready = true;
-        Log::Debug("[OpenProStreet] Overlay ready.\n");
+        Log::Event(Log::Tag::Client, "Overlay ready\n");
+        // A short hello on the first frames, so it's clear the overlay works before any race.
+        Guard guard;
+        Notice hello;
+        hello.kind = "result";
+        hello.title = "OpenProStreet " + g_version;
+        hello.lines.push_back("The overlay is on. Your times and place show here during races.");
+        g_noticeQueue.push_back(hello);
     }
 
     static void BeforeReset(IDirect3DDevice9*)
@@ -371,6 +380,11 @@ namespace Overlay
             }
         }
         if (!showStanding && notices.empty()) return;
+        if (!g_drawnOnce)
+        {
+            g_drawnOnce = true;
+            Log::Event(Log::Tag::Client, "Overlay is drawing\n");
+        }
 
         IDirect3DSurface9* back = nullptr;
         ImGuiIO& io = ImGui::GetIO();
@@ -402,9 +416,10 @@ namespace Overlay
 
     // ---- Public ----
 
-    void Init(uintptr_t baseModule)
+    void Init(uintptr_t baseModule, const std::string& version)
     {
         InitializeCriticalSection(&g_lock);
+        g_version = version;
         const std::string& settings = Log::SettingsPath();
         if (!settings.empty())
         {
