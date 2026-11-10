@@ -27,6 +27,9 @@ namespace Overlay
     static float g_userScale = 1.0f;
     static std::string g_version;
     static bool g_drawnOnce = false;
+    static bool g_test = false;                  // [Overlay] Test=1: always show a small panel
+    static IDirect3DDevice9* g_device = nullptr; // the device ImGui draws with
+    static int g_devicesCreated = 0;
 
     // ---- What to show, written by the game state and network threads, read when drawing ----
 
@@ -139,9 +142,34 @@ namespace Overlay
         style.Colors[ImGuiCol_TableBorderLight] = Line;
     }
 
+    // The game can make more than one device, and only the one it presents with reaches the screen.
+    // The overlay follows whichever device presents.
+    static void UseDevice(IDirect3DDevice9* device)
+    {
+        if (device == g_device) return;
+        ImGui_ImplDX9_Shutdown();
+        g_deviceLost = false;
+        if (!ImGui_ImplDX9_Init(device))
+        {
+            Log::Warn("The overlay couldn't start on the game's new display device, so it's off.\n");
+            g_enabled = false;
+            g_ready = false;
+            return;
+        }
+        g_device = device;
+        Log::Event(Log::Tag::Client, "Overlay moved to the game's new display device\n");
+    }
+
     static void DeviceCreated(IDirect3DDevice9* device, HWND)
     {
-        if (!g_enabled || g_ready) return;
+        ++g_devicesCreated;
+        Log::Event(Log::Tag::Client, "The game made display device %d\n", g_devicesCreated);
+        if (!g_enabled) return;
+        if (g_ready)
+        {
+            UseDevice(device);
+            return;
+        }
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
@@ -169,6 +197,7 @@ namespace Overlay
         QueryPerformanceFrequency(&g_frequency);
         QueryPerformanceCounter(&g_start);
         g_last = g_start;
+        g_device = device;
         g_ready = true;
         Log::Event(Log::Tag::Client, "Overlay ready\n");
     }
@@ -351,6 +380,8 @@ namespace Overlay
     static void BeforePresent(IDirect3DDevice9* device)
     {
         if (!g_ready || g_deviceLost) return;
+        UseDevice(device);
+        if (!g_ready) return;
 
         // Copy what to show, so the other threads aren't held up while drawing.
         bool showStanding;
@@ -372,7 +403,7 @@ namespace Overlay
                 notices.push_back(g_noticeQueue[i]);
             }
         }
-        if (!showStanding && notices.empty()) return;
+        if (!showStanding && notices.empty() && !g_test) return;
         if (!g_drawnOnce)
         {
             g_drawnOnce = true;
@@ -398,6 +429,22 @@ namespace Overlay
         ImGui::NewFrame();
         if (showStanding) DrawStanding(trackName, mode, boards, s);
         if (g_notices) DrawNotices(notices, now, s);
+        if (g_test)
+        {
+            // A fixed panel bottom left, to check the overlay reaches the screen at all.
+            ImGui::SetNextWindowPos(ImVec2(24.0f * s, io.DisplaySize.y - 24.0f * s), ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+            if (ImGui::Begin("##test", nullptr, PanelFlags))
+            {
+                ImGui::PushFont(g_fontBody);
+                ImGui::TextColored(Success, "OpenProStreet overlay test");
+                ImGui::PopFont();
+                ImGui::PushFont(g_fontSmall);
+                ImGui::TextColored(Text2, "%.0fx%.0f, %d device(s), %s", io.DisplaySize.x, io.DisplaySize.y, g_devicesCreated,
+                                   showStanding ? "standing shown" : "no standing");
+                ImGui::PopFont();
+            }
+            ImGui::End();
+        }
         ImGui::EndFrame();
         // The game renders its effects through other surfaces, which can still be bound when it
         // presents. Draw on the back buffer itself, without a depth buffer of another size, and put
@@ -439,6 +486,7 @@ namespace Overlay
         {
             g_enabled = GetPrivateProfileIntA("Overlay", "Enabled", 1, settings.c_str()) != 0;
             g_notices = GetPrivateProfileIntA("Overlay", "Notifications", 1, settings.c_str()) != 0;
+            g_test = GetPrivateProfileIntA("Overlay", "Test", 0, settings.c_str()) != 0;
             char corner[32] = {};
             GetPrivateProfileStringA("Overlay", "Position", "TopRight", corner, sizeof(corner), settings.c_str());
             if (_stricmp(corner, "TopLeft") == 0) g_corner = TopLeft;
@@ -502,6 +550,7 @@ namespace Overlay
         std::vector<std::string> lines;
         lines.push_back("Your times and place show here during races.");
         PushNotice("best", "OpenProStreet " + g_version + " connected", lines);
+        Log::Event(Log::Tag::Client, "Overlay: connected notice queued\n");
     }
 
     void PushNotice(const std::string& kind, const std::string& title, const std::vector<std::string>& lines)
