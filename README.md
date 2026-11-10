@@ -114,18 +114,6 @@ DumpEvents=1
 
 The plugin writes `%LOCALAPPDATA%\OpenProStreet\event_catalog.json`. Copy it next to the server, then remove the setting.
 
-### Overlay
-
-During a race on an OpenProStreet server, a card in a corner shows where you stand on that track, layout, mode and speed limiter class: the server record and its holder, your best and place, and the time just ahead of yours to beat. After each race, a short notification says what it meant: a new personal best or server record with your place, the XP you earned, a new level, or why the result didn't count. It's drawn with Dear ImGui on the game's Direct3D 9 device, in the style of the website, and never takes the mouse or keyboard.
-
-```ini
-[Overlay]
-Enabled=1
-Notifications=1
-Position=TopRight   ; TopLeft, TopRight, BottomLeft or BottomRight
-Scale=100           ; percent, 50 to 200
-```
-
 ### Console log
 
 If another plugin opens a console, such as XNFSPS MultiFix with `EnablePrints = 1`, this plugin shows short, coloured lines there. For the detailed log, or to turn colour off, create `scripts/OpenProStreetClient.ini`:

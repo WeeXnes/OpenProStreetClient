@@ -35,10 +35,6 @@ namespace ServerLink
 
     void SubmitRaceResult(const RaceReport& report);
 
-    // Asks where the player stands on the event they're about to race, for the overlay. The server
-    // knows the layout and lap count from the room. The answer goes to Overlay::SetStanding.
-    void RequestStanding(const std::string& trackKey, const std::string& raceMode, const std::string& speedLimit);
-
     // The player picked quick match in the game's menus, so the server should match them. This
     // happens before the game connects, so it's sent as soon as the connection starts.
     // location, difficulty and events ("key:laps:heats,...") are the race day to create if no room

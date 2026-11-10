@@ -1,6 +1,5 @@
 #include "discord/discord_rpc.h"
 #include "game/map.h"
-#include "game/overlay.h"
 #include "game/car.h"
 #include "game/race_mode.h"
 #include "game/race_results.h"
@@ -118,9 +117,6 @@ DWORD WINAPI RpcThread(LPVOID param) {
                 }
                 lastLoggedMode = raceMode;
             }
-
-            // The overlay shows where the player stands on this track and mode.
-            Overlay::OnGameState(raceActive, rawMap, displayMap, raceMode);
 
             unsigned long long money = 0;
             unsigned long long xp = 0;
