@@ -57,6 +57,17 @@ This plugin was developed for the **v1.1 (Europe) "Battery 1.1 nocdfix"** execut
 
 Your name and password log you in, from any PC with the plugin. The plugin also keeps a key in `%LOCALAPPDATA%\OpenProStreet\identity.key` for the encrypted login. It's created on its own, and you don't need to copy it to another PC.
 
+To log in on your own as soon as you open OpenProStreet, turn on "Log in automatically" in the launcher's settings and enter your name and password there. The launcher saves them under `[Account]` in `scripts/OpenProStreetClient.ini`:
+
+```ini
+[Account]
+AutoLogin=1
+Username=YourName
+Password=dpapi:...
+```
+
+On Windows the password is encrypted for your Windows user, so other users of the PC can't read it from the file. On Linux it's saved as you typed it. If the automatic login fails, the account screen stays open and you log in by hand.
+
 ### Choosing a server
 
 The plugin goes straight to `weexnes.dev`, without the address screen. To use another server, create `scripts/OpenProStreetClient.ini`:

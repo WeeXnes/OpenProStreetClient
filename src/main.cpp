@@ -1,4 +1,5 @@
 #include "discord/discord_rpc.h"
+#include "game/auto_login.h"
 #include "game/borderless.h"
 #include "game/car_lock.h"
 #include "game/input_focus.h"
@@ -16,7 +17,7 @@
 
 discord::Core *discordCore = nullptr;
 
-const std::string version = "9.6";
+const std::string version = "9.7";
 
 // Every hook patches nfs.exe v1.1 at fixed addresses, so the client only runs on that layout. The
 // game's version check pushes 1, 1 here (MultiFix reads the same bytes). A packed exe, such as the
@@ -83,6 +84,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
     RaceResults::Init(baseModule);
     CarLock::Init(baseModule);
     InputFocus::Init(baseModule);
+    AutoLogin::Init(baseModule);
 
     HANDLE hThread = CreateThread(NULL, 0, RpcThread, NULL, 0, NULL);
     if (hThread) {

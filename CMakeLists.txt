@@ -24,6 +24,7 @@ set(CLIENT_SOURCES
     src/main.cpp
     src/utils.cpp
     src/discord/discord_rpc.cpp
+    src/game/auto_login.cpp
     src/game/borderless.cpp
     src/game/car.cpp
     src/game/car_lock.cpp
@@ -90,6 +91,7 @@ if(EXISTS "${THIRDPARTY_SDK_DIR}")
     target_link_libraries(OpenProStreetClient PRIVATE
         "${THIRDPARTY_SDK_DIR}/lib/x86/discord_game_sdk.dll.lib"
         ws2_32
+        crypt32
         bcrypt
     )
 else()
@@ -109,6 +111,7 @@ else()
         "${VCPKG_INSTALLED_DIR}/lib/discord_game_sdk.lib"
         "${VCPKG_INSTALLED_DIR}/lib/discord_game_sdk_cpp.lib"
         ws2_32
+        crypt32
         bcrypt
     )
 endif()
