@@ -7,6 +7,18 @@ project(OpenProStreetClient)
 # The overlay takes no input, so ImGui needs neither the clipboard nor the input method functions.
 add_definitions(-DIMGUI_DISABLE_WIN32_FUNCTIONS -DIMGUI_DISABLE_DEMO_WINDOWS -DIMGUI_DISABLE_DEBUG_TOOLS)
 
+# The client's version lives in src/main.cpp, where the release job reads it too. The file details
+# Windows and the launcher read are made from it, so they can't fall behind.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp" CLIENT_VERSION_LINE REGEX "const std::string version = \"")
+if(NOT CLIENT_VERSION_LINE MATCHES "\"([0-9]+)\\.([0-9]+)")
+    message(FATAL_ERROR "Couldn't read the client version from src/main.cpp")
+endif()
+set(CLIENT_VERSION_MAJOR ${CMAKE_MATCH_1})
+set(CLIENT_VERSION_MINOR ${CMAKE_MATCH_2})
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/main.cpp)
+configure_file(src/version.rc.in "${CMAKE_CURRENT_BINARY_DIR}/version.rc" @ONLY)
+message(STATUS "Client version ${CLIENT_VERSION_MAJOR}.${CLIENT_VERSION_MINOR}")
+
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
@@ -31,7 +43,7 @@ set(CLIENT_SOURCES
     src/game/tweaks.cpp
     src/net/secure_client.cpp
     src/net/server_link.cpp
-    src/version.rc
+    "${CMAKE_CURRENT_BINARY_DIR}/version.rc"
     vendor/monocypher/monocypher.c
     vendor/monocypher/monocypher-ed25519.c
     vendor/imgui/imgui.cpp

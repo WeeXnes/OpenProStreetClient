@@ -1,9 +1,10 @@
-// The details Windows shows in the file's properties. Keep the version in step with src/main.cpp.
+// The details Windows shows in the file's properties. CMake fills in the version from src/main.cpp,
+// which is also where the release job reads it, so the launcher always sees the right one.
 #include <winver.h>
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 9,3,0,0
-PRODUCTVERSION 9,3,0,0
+FILEVERSION @CLIENT_VERSION_MAJOR@,@CLIENT_VERSION_MINOR@,0,0
+PRODUCTVERSION @CLIENT_VERSION_MAJOR@,@CLIENT_VERSION_MINOR@,0,0
 FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
 FILEFLAGS 0
 FILEOS VOS_NT_WINDOWS32
@@ -16,12 +17,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "WeeXnes"
             VALUE "FileDescription", "OpenProStreet Client, a community plugin for Need for Speed: ProStreet"
-            VALUE "FileVersion", "9.3.0.0"
+            VALUE "FileVersion", "@CLIENT_VERSION_MAJOR@.@CLIENT_VERSION_MINOR@.0.0"
             VALUE "InternalName", "OpenProStreetClient"
             VALUE "LegalCopyright", "Copyright (C) WeeXnes. Not affiliated with Electronic Arts."
             VALUE "OriginalFilename", "OpenProStreetClient.asi"
             VALUE "ProductName", "OpenProStreet Client"
-            VALUE "ProductVersion", "9.3.0.0"
+            VALUE "ProductVersion", "@CLIENT_VERSION_MAJOR@.@CLIENT_VERSION_MINOR@.0.0"
         END
     END
     BLOCK "VarFileInfo"
