@@ -10,16 +10,20 @@ namespace D3DHooks
     static const size_t VTABLE_CREATE_DEVICE = 16; // IDirect3D9::CreateDevice
     static const size_t VTABLE_RESET = 16;         // IDirect3DDevice9::Reset
     static const size_t VTABLE_PRESENT = 17;       // IDirect3DDevice9::Present
+    static const size_t VTABLE_SWAP_PRESENT = 3;   // IDirect3DSwapChain9::Present
 
     typedef IDirect3D9* (WINAPI *Direct3DCreateFn)(UINT);
     typedef HRESULT (WINAPI *CreateDeviceFn)(IDirect3D9*, UINT, D3DDEVTYPE, HWND, DWORD, D3DPRESENT_PARAMETERS*, IDirect3DDevice9**);
     typedef HRESULT (WINAPI *ResetFn)(IDirect3DDevice9*, D3DPRESENT_PARAMETERS*);
     typedef HRESULT (WINAPI *PresentFn)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*);
+    typedef HRESULT (WINAPI *SwapPresentFn)(IDirect3DSwapChain9*, const RECT*, const RECT*, HWND, const RGNDATA*, DWORD);
 
     static Direct3DCreateFn g_realDirect3DCreate = nullptr;
     static CreateDeviceFn g_realCreateDevice = nullptr;
     static ResetFn g_realReset = nullptr;
     static PresentFn g_realPresent = nullptr;
+    static SwapPresentFn g_realSwapPresent = nullptr;
+    static bool g_inPresent = false; // a device Present can go through the swap chain's; draw once
     static bool g_installed = false;
 
     static Listener g_listeners[4];
@@ -33,11 +37,36 @@ namespace D3DHooks
         VirtualProtect(slot, sizeof(void*), oldProtect, &oldProtect);
     }
 
-    static HRESULT WINAPI PresentHook(IDirect3DDevice9* device, const RECT* source, const RECT* dest, HWND window, const RGNDATA* dirty)
+    static void BeforePresent(IDirect3DDevice9* device)
     {
         for (int i = 0; i < g_listenerCount; ++i)
             if (g_listeners[i].beforePresent) g_listeners[i].beforePresent(device);
-        return g_realPresent(device, source, dest, window, dirty);
+    }
+
+    static HRESULT WINAPI PresentHook(IDirect3DDevice9* device, const RECT* source, const RECT* dest, HWND window, const RGNDATA* dirty)
+    {
+        if (g_inPresent) return g_realPresent(device, source, dest, window, dirty);
+        g_inPresent = true;
+        BeforePresent(device);
+        const HRESULT result = g_realPresent(device, source, dest, window, dirty);
+        g_inPresent = false;
+        return result;
+    }
+
+    // Games can also show frames through the swap chain instead of the device.
+    static HRESULT WINAPI SwapPresentHook(IDirect3DSwapChain9* chain, const RECT* source, const RECT* dest, HWND window, const RGNDATA* dirty, DWORD flags)
+    {
+        if (g_inPresent) return g_realSwapPresent(chain, source, dest, window, dirty, flags);
+        g_inPresent = true;
+        IDirect3DDevice9* device = nullptr;
+        if (SUCCEEDED(chain->GetDevice(&device)) && device)
+        {
+            BeforePresent(device);
+            device->Release();
+        }
+        const HRESULT result = g_realSwapPresent(chain, source, dest, window, dirty, flags);
+        g_inPresent = false;
+        return result;
     }
 
     static HRESULT WINAPI ResetHook(IDirect3DDevice9* device, D3DPRESENT_PARAMETERS* parameters)
@@ -72,6 +101,21 @@ namespace D3DHooks
             g_realPresent = reinterpret_cast<PresentFn>(vtable[VTABLE_PRESENT]);
             PatchPointer(&vtable[VTABLE_PRESENT], reinterpret_cast<void*>(PresentHook));
         }
+        if (!g_realSwapPresent)
+        {
+            IDirect3DSwapChain9* chain = nullptr;
+            if (SUCCEEDED((*device)->GetSwapChain(0, &chain)) && chain)
+            {
+                void** vtable = *reinterpret_cast<void***>(chain);
+                g_realSwapPresent = reinterpret_cast<SwapPresentFn>(vtable[VTABLE_SWAP_PRESENT]);
+                PatchPointer(&vtable[VTABLE_SWAP_PRESENT], reinterpret_cast<void*>(SwapPresentHook));
+                chain->Release();
+            }
+        }
+        if (parameters)
+            Log::Event(Log::Tag::Client, "Display device: %ux%u, format %u, %s, flags 0x%lX, swap effect %u\n", parameters->BackBufferWidth,
+                       parameters->BackBufferHeight, static_cast<unsigned>(parameters->BackBufferFormat), parameters->Windowed ? "windowed" : "fullscreen",
+                       static_cast<unsigned long>(flags), static_cast<unsigned>(parameters->SwapEffect));
         HWND focus = window ? window : (parameters ? parameters->hDeviceWindow : nullptr);
         for (int i = 0; i < g_listenerCount; ++i)
             if (g_listeners[i].deviceCreated) g_listeners[i].deviceCreated(*device, focus);

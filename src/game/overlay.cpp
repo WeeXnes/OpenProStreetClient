@@ -30,6 +30,9 @@ namespace Overlay
     static bool g_test = false;                  // [Overlay] Test=1: always show a small panel
     static IDirect3DDevice9* g_device = nullptr; // the device ImGui draws with
     static int g_devicesCreated = 0;
+    static double g_firstDrawAt = 0.0;
+    static int g_frames = 0, g_failedFrames = 0;
+    static bool g_reported = false;
 
     // ---- What to show, written by the game state and network threads, read when drawing ----
 
@@ -407,6 +410,7 @@ namespace Overlay
         if (!g_drawnOnce)
         {
             g_drawnOnce = true;
+            g_firstDrawAt = now;
             Log::Event(Log::Tag::Client, "Overlay is drawing\n");
         }
 
@@ -449,22 +453,48 @@ namespace Overlay
         // The game renders its effects through other surfaces, which can still be bound when it
         // presents. Draw on the back buffer itself, without a depth buffer of another size, and put
         // the game's surfaces back after.
+        ImGui::Render();
+        ImDrawData* drawData = ImGui::GetDrawData();
         IDirect3DSurface9* gameTarget = nullptr;
         IDirect3DSurface9* gameDepth = nullptr;
         IDirect3DSurface9* backBuffer = nullptr;
         device->GetRenderTarget(0, &gameTarget);
         device->GetDepthStencilSurface(&gameDepth);
+        // ImGui's backend leaves some states as the game had them, and a game can leave colour
+        // writes off, sRGB on, or clip planes and a second stream set, which hide the overlay. Keep
+        // the game's states in a block of our own, set those too, and put everything back after.
+        IDirect3DStateBlock9* gameState = nullptr;
+        if (SUCCEEDED(device->CreateStateBlock(D3DSBT_ALL, &gameState)) && gameState) gameState->Capture();
+        HRESULT targetResult = E_FAIL, sceneResult = E_FAIL;
         if (SUCCEEDED(device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &backBuffer)) && backBuffer)
         {
-            device->SetRenderTarget(0, backBuffer);
+            targetResult = device->SetRenderTarget(0, backBuffer);
             device->SetDepthStencilSurface(nullptr);
-            if (SUCCEEDED(device->BeginScene()))
+            device->SetRenderState(D3DRS_COLORWRITEENABLE, 0x0000000F);
+            device->SetRenderState(D3DRS_SRGBWRITEENABLE, FALSE);
+            device->SetRenderState(D3DRS_CLIPPLANEENABLE, 0);
+            device->SetRenderState(D3DRS_MULTISAMPLEANTIALIAS, FALSE);
+            device->SetRenderState(D3DRS_MULTISAMPLEMASK, 0xFFFFFFFF);
+            device->SetRenderState(D3DRS_TWOSIDEDSTENCILMODE, FALSE);
+            device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
+            device->SetTextureStageState(0, D3DTSS_TEXCOORDINDEX, 0);
+            device->SetTextureStageState(0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE);
+            device->SetSamplerState(0, D3DSAMP_SRGBTEXTURE, FALSE);
+            device->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+            for (DWORD stream = 0; stream < 4; ++stream) device->SetStreamSourceFreq(stream, 1);
+            device->SetVertexDeclaration(nullptr);
+            sceneResult = device->BeginScene();
+            if (SUCCEEDED(sceneResult))
             {
-                ImGui::Render();
-                ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
+                ImGui_ImplDX9_RenderDrawData(drawData);
                 device->EndScene();
             }
             backBuffer->Release();
+        }
+        if (gameState)
+        {
+            gameState->Apply();
+            gameState->Release();
         }
         if (gameTarget)
         {
@@ -473,6 +503,17 @@ namespace Overlay
         }
         device->SetDepthStencilSurface(gameDepth);
         if (gameDepth) gameDepth->Release();
+
+        // What happened, logged once a while after drawing starts, so a missing overlay can be traced.
+        ++g_frames;
+        if (FAILED(targetResult) || FAILED(sceneResult)) ++g_failedFrames;
+        if (!g_reported && now - g_firstDrawAt > 10.0)
+        {
+            g_reported = true;
+            Log::Event(Log::Tag::Client, "Overlay: %d frames in 10 s, %d failed (target 0x%08lX, scene 0x%08lX), %d shapes, %d vertices, state block %s\n",
+                       g_frames, g_failedFrames, static_cast<unsigned long>(targetResult), static_cast<unsigned long>(sceneResult),
+                       drawData ? drawData->CmdListsCount : 0, drawData ? drawData->TotalVtxCount : 0, gameState ? "ok" : "missing");
+        }
     }
 
     // ---- Public ----
