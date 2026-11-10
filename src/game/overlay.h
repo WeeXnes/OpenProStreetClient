@@ -32,4 +32,8 @@ namespace Overlay
     // From the server.
     void SetStanding(const std::string& trackKey, const std::string& raceMode, const std::vector<Board>& boards);
     void PushNotice(const std::string& kind, const std::string& title, const std::vector<std::string>& lines);
+
+    // The encrypted connection to the server is up, which happens on logging in from the main menu.
+    // Shows a short notice, so it's clear the overlay works before the first race.
+    void OnConnected();
 }

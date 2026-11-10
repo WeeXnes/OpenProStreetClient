@@ -171,13 +171,6 @@ namespace Overlay
         g_last = g_start;
         g_ready = true;
         Log::Event(Log::Tag::Client, "Overlay ready\n");
-        // A short hello on the first frames, so it's clear the overlay works before any race.
-        Guard guard;
-        Notice hello;
-        hello.kind = "result";
-        hello.title = "OpenProStreet " + g_version;
-        hello.lines.push_back("The overlay is on. Your times and place show here during races.");
-        g_noticeQueue.push_back(hello);
     }
 
     static void BeforeReset(IDirect3DDevice9*)
@@ -406,12 +399,33 @@ namespace Overlay
         if (showStanding) DrawStanding(trackName, mode, boards, s);
         if (g_notices) DrawNotices(notices, now, s);
         ImGui::EndFrame();
-        if (SUCCEEDED(device->BeginScene()))
+        // The game renders its effects through other surfaces, which can still be bound when it
+        // presents. Draw on the back buffer itself, without a depth buffer of another size, and put
+        // the game's surfaces back after.
+        IDirect3DSurface9* gameTarget = nullptr;
+        IDirect3DSurface9* gameDepth = nullptr;
+        IDirect3DSurface9* backBuffer = nullptr;
+        device->GetRenderTarget(0, &gameTarget);
+        device->GetDepthStencilSurface(&gameDepth);
+        if (SUCCEEDED(device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &backBuffer)) && backBuffer)
         {
-            ImGui::Render();
-            ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
-            device->EndScene();
+            device->SetRenderTarget(0, backBuffer);
+            device->SetDepthStencilSurface(nullptr);
+            if (SUCCEEDED(device->BeginScene()))
+            {
+                ImGui::Render();
+                ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
+                device->EndScene();
+            }
+            backBuffer->Release();
         }
+        if (gameTarget)
+        {
+            device->SetRenderTarget(0, gameTarget);
+            gameTarget->Release();
+        }
+        device->SetDepthStencilSurface(gameDepth);
+        if (gameDepth) gameDepth->Release();
     }
 
     // ---- Public ----
@@ -480,6 +494,14 @@ namespace Overlay
         g_standingTrack = trackKey;
         g_standingMode = raceMode;
         g_boards = boards;
+    }
+
+    void OnConnected()
+    {
+        if (!g_enabled || !g_notices) return;
+        std::vector<std::string> lines;
+        lines.push_back("Your times and place show here during races.");
+        PushNotice("best", "OpenProStreet " + g_version + " connected", lines);
     }
 
     void PushNotice(const std::string& kind, const std::string& title, const std::vector<std::string>& lines)

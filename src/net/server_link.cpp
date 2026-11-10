@@ -113,6 +113,10 @@ namespace ServerLink
             Log::Warn("The server refused a request: %s\n", Log::Highlight(xml.substr(0, 300)).c_str());
             return;
         }
+        // The server answered the client's hello: the encrypted connection works.
+        if (xml.find("<method> hello") != std::string::npos && xml.find("TRANSACTION_TYPE_REPLY") != std::string::npos) {
+            Overlay::OnConnected();
+        }
         // Sent on joining a room: the race day's allowed cars, or nothing for every car.
         if (xml.find("<method> allowedCars") != std::string::npos) {
             CarLock::SetAllowedCars(ParamValue(xml, "cars"));
