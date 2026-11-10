@@ -14,6 +14,7 @@
 
 #include "net/secure_client.h"
 #include "game/car_lock.h"
+#include "game/overlay.h"
 #include "log.h"
 
 extern const std::string version;
@@ -115,6 +116,44 @@ namespace ServerLink
         // Sent on joining a room: the race day's allowed cars, or nothing for every car.
         if (xml.find("<method> allowedCars") != std::string::npos) {
             CarLock::SetAllowedCars(ParamValue(xml, "cars"));
+        }
+        // What a race meant for the player: a notification in the overlay.
+        if (xml.find("<method> notice") != std::string::npos) {
+            std::vector<std::string> lines;
+            const int count = atoi(ParamValue(xml, "lines").c_str());
+            for (int i = 0; i < count && i < 12; ++i) lines.push_back(ParamValue(xml, "line" + std::to_string(i)));
+            Overlay::PushNotice(ParamValue(xml, "kind"), ParamValue(xml, "title"), lines);
+        }
+        // Where the player stands on the event they're racing.
+        if (xml.find("<method> standing") != std::string::npos) {
+            std::vector<Overlay::Board> boards;
+            const int count = atoi(ParamValue(xml, "boards").c_str());
+            for (int i = 0; i < count && i < 8; ++i) {
+                // One board per parameter, to fit the channel's size limit:
+                // metric|laps|record|record holder|best|place|players|beat|beat holder
+                const std::string packed = ParamValue(xml, "b" + std::to_string(i));
+                std::vector<std::string> f;
+                size_t start = 0;
+                while (true) {
+                    const size_t bar = packed.find('|', start);
+                    f.push_back(packed.substr(start, bar == std::string::npos ? std::string::npos : bar - start));
+                    if (bar == std::string::npos) break;
+                    start = bar + 1;
+                }
+                if (f.size() < 9) continue;
+                Overlay::Board b;
+                b.metric = f[0];
+                b.laps = atoi(f[1].c_str());
+                b.record = atof(f[2].c_str());
+                b.recordHolder = f[3];
+                b.best = atof(f[4].c_str());
+                b.place = atoi(f[5].c_str());
+                b.players = atoi(f[6].c_str());
+                b.beat = atof(f[7].c_str());
+                b.beatHolder = f[8];
+                boards.push_back(b);
+            }
+            Overlay::SetStanding(ParamValue(xml, "track_key"), ParamValue(xml, "race_mode"), boards);
         }
     }
 
@@ -334,5 +373,17 @@ namespace ServerLink
         Lock lock;
         g_quickMatchPending = false;
         SendCommand("matchmaking", "cancelQuickMatch", std::vector<std::pair<std::string, std::string> >());
+    }
+
+    void RequestStanding(const std::string& trackKey, const std::string& raceMode, const std::string& speedLimit) {
+        std::vector<std::pair<std::string, std::string> > params;
+        params.push_back(std::make_pair(std::string("track_key"), trackKey));
+        params.push_back(std::make_pair(std::string("race_mode"), raceMode));
+        params.push_back(std::make_pair(std::string("laps"), std::string("0"))); // the room's event decides
+        if (!speedLimit.empty()) params.push_back(std::make_pair(std::string("speed_limit"), speedLimit));
+        Lock lock;
+        if (g_client && g_client->GetState() == SecureClient::State::Established) {
+            SendCommand("results", "standing", params);
+        }
     }
 }
