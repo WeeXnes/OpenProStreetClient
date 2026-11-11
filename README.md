@@ -125,6 +125,23 @@ DumpEvents=1
 
 The plugin writes `%LOCALAPPDATA%\OpenProStreet\event_catalog.json`. Copy it next to the server, then remove the setting.
 
+### Display test
+
+A test for working on an overlay, not for playing. Add this to `scripts/OpenProStreetClient.ini`:
+
+```ini
+[Debug]
+DisplayTest=1
+```
+
+Three squares then appear in the top left corner of the game, each drawn a different way:
+
+- **Red:** cleared on the back buffer just before the frame is shown.
+- **Green:** cleared on whatever the game is drawing to, at the end of each of its scenes. It may also turn up in reflections or other effects.
+- **Blue:** drawn as triangles on the back buffer just before the frame is shown, the way an overlay draws.
+
+Every 10 seconds the console says how many display devices the game made, and for each one how often it presented, its size and mode, and whether anything failed. It also names the file each hooked function is in, which shows whether the game draws through Windows' `d3d9.dll`, DXVK or another overlay. Which squares show, and those lines, say where an overlay has to draw. Remove the setting to play normally.
+
 ### Console log
 
 If another plugin opens a console, such as XNFSPS MultiFix with `EnablePrints = 1`, this plugin shows short, coloured lines there. For the detailed log, or to turn colour off, create `scripts/OpenProStreetClient.ini`:
@@ -141,7 +158,7 @@ Colour is also off when `NO_COLOR` is set, and the detailed log has no colour.
 
 ## 💻 Building from Source
 
-The Monocypher encryption library is included in `vendor/`.
+The Monocypher encryption library and MinHook (BSD licence, for the display test) are included in `vendor/`.
 
 ### Option A: Linux Cross-Compilation (Recommended)
 ```bash

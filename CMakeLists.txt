@@ -28,6 +28,7 @@ set(CLIENT_SOURCES
     src/game/borderless.cpp
     src/game/car.cpp
     src/game/car_lock.cpp
+    src/game/display_test.cpp
     src/game/hooks.cpp
     src/game/input_focus.cpp
     src/game/lan_menu.cpp
@@ -43,6 +44,10 @@ set(CLIENT_SOURCES
     "${CMAKE_CURRENT_BINARY_DIR}/version.rc"
     vendor/monocypher/monocypher.c
     vendor/monocypher/monocypher-ed25519.c
+    vendor/minhook/hook.c
+    vendor/minhook/buffer.c
+    vendor/minhook/trampoline.c
+    vendor/minhook/hde/hde32.c
 )
 
 # Check if we have a local thirdparty Discord Game SDK

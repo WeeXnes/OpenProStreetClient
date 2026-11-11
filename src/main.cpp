@@ -3,6 +3,7 @@
 #include "game/borderless.h"
 #include "game/car_lock.h"
 #include "game/input_focus.h"
+#include "game/display_test.h"
 #include "game/lan_menu.h"
 #include "game/lanfix.h"
 #include "game/race_results.h"
@@ -18,7 +19,7 @@
 
 discord::Core *discordCore = nullptr;
 
-const std::string version = "9.8";
+const std::string version = "9.9";
 
 // Every hook patches nfs.exe v1.1 at fixed addresses, so the client only runs on that layout. The
 // game's version check pushes 1, 1 here (MultiFix reads the same bytes). A packed exe, such as the
@@ -81,6 +82,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
     Tweaks::SetVersion(version.c_str());
     Tweaks::Init(baseModule);
     VaultFixes::Init(baseModule);
+    DisplayTest::Init(baseModule);
     Borderless::Init(baseModule);
     RaceResults::Init(baseModule);
     CarLock::Init(baseModule);
