@@ -4,6 +4,9 @@ set(CMAKE_TOOLCHAIN_FILE "C:/Users/WeeXnes/vcpkg/scripts/buildsystems/vcpkg.cmak
 
 project(OpenProStreetClient)
 
+# The overlay takes no input, so ImGui needs neither the clipboard nor the input method functions.
+add_definitions(-DIMGUI_DISABLE_WIN32_FUNCTIONS -DIMGUI_DISABLE_DEMO_WINDOWS -DIMGUI_DISABLE_DEBUG_TOOLS)
+
 # The client's version lives in src/main.cpp, where the release job reads it too. The file details
 # Windows and the launcher read are made from it, so they can't fall behind.
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp" CLIENT_VERSION_LINE REGEX "const std::string version = \"")
@@ -28,12 +31,14 @@ set(CLIENT_SOURCES
     src/game/borderless.cpp
     src/game/car.cpp
     src/game/car_lock.cpp
+    src/game/d3d_hooks.cpp
     src/game/display_test.cpp
     src/game/hooks.cpp
     src/game/input_focus.cpp
     src/game/lan_menu.cpp
     src/game/lanfix.cpp
     src/game/map.cpp
+    src/game/overlay.cpp
     src/game/quick_match.cpp
     src/game/race_mode.cpp
     src/game/race_results.cpp
@@ -48,6 +53,11 @@ set(CLIENT_SOURCES
     vendor/minhook/buffer.c
     vendor/minhook/trampoline.c
     vendor/minhook/hde/hde32.c
+    vendor/imgui/imgui.cpp
+    vendor/imgui/imgui_draw.cpp
+    vendor/imgui/imgui_tables.cpp
+    vendor/imgui/imgui_widgets.cpp
+    vendor/imgui/backends/imgui_impl_dx9.cpp
 )
 
 # Check if we have a local thirdparty Discord Game SDK
@@ -68,6 +78,7 @@ if(EXISTS "${THIRDPARTY_SDK_DIR}")
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
         "${CMAKE_CURRENT_SOURCE_DIR}/vendor"
         "${CMAKE_CURRENT_SOURCE_DIR}/vendor/monocypher"
+        "${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui"
         "${THIRDPARTY_SDK_DIR}/cpp"
     )
 
@@ -110,6 +121,7 @@ else()
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
         "${CMAKE_CURRENT_SOURCE_DIR}/vendor"
         "${CMAKE_CURRENT_SOURCE_DIR}/vendor/monocypher"
+        "${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui"
         "${VCPKG_INSTALLED_DIR}/include/discord-game-sdk"
     )
 

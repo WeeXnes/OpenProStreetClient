@@ -125,6 +125,19 @@ DumpEvents=1
 
 The plugin writes `%LOCALAPPDATA%\OpenProStreet\event_catalog.json`. Copy it next to the server, then remove the setting.
 
+### Overlay
+
+During a race on an OpenProStreet server, a card in a corner shows where you stand on that track, layout and mode: the server record and its holder, your best and place, and the time just ahead of yours to beat. After each race, a short notification says what it meant: a new personal best or server record with your place, the XP you earned, a new level, or why the result didn't count. It's drawn with Dear ImGui on the game's Direct3D 9 frames, in the style of the website, and never takes the mouse or keyboard.
+
+```ini
+[Overlay]
+Enabled=1
+Notifications=1
+Position=TopRight   ; TopLeft, TopRight, BottomLeft or BottomRight
+Scale=100           ; percent, 50 to 200
+Test=0              ; 1 always shows a small panel bottom left, to check the overlay reaches the screen
+```
+
 ### Display test
 
 A test for working on an overlay, not for playing. Add this to `scripts/OpenProStreetClient.ini`:
@@ -158,7 +171,7 @@ Colour is also off when `NO_COLOR` is set, and the detailed log has no colour.
 
 ## 💻 Building from Source
 
-The Monocypher encryption library and MinHook (BSD licence, for the display test) are included in `vendor/`.
+The Monocypher encryption library, MinHook (BSD licence) and Dear ImGui (MIT licence), for the overlay, are included in `vendor/`.
 
 ### Option A: Linux Cross-Compilation (Recommended)
 ```bash

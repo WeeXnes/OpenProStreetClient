@@ -6,33 +6,12 @@
 #include <string>
 
 #include "log.h"
-#include "minhook/MinHook.h"
+#include "game/d3d_hooks.h"
 
 namespace DisplayTest
 {
-    // Vtable indices, the same in every Direct3D 9.
-    static const size_t D3D_CREATE_DEVICE = 16;  // IDirect3D9::CreateDevice
-    static const size_t DEVICE_RESET = 16;       // IDirect3DDevice9::Reset
-    static const size_t DEVICE_PRESENT = 17;     // IDirect3DDevice9::Present
-    static const size_t DEVICE_END_SCENE = 42;   // IDirect3DDevice9::EndScene
-    static const size_t CHAIN_PRESENT = 3;       // IDirect3DSwapChain9::Present
-
     static const DWORD SUMMARY_INTERVAL_MS = 10000;
     static const int MAX_DEVICES = 8;
-
-    typedef IDirect3D9* (WINAPI *Direct3DCreateFn)(UINT);
-    typedef HRESULT (WINAPI *CreateDeviceFn)(IDirect3D9*, UINT, D3DDEVTYPE, HWND, DWORD, D3DPRESENT_PARAMETERS*, IDirect3DDevice9**);
-    typedef HRESULT (WINAPI *ResetFn)(IDirect3DDevice9*, D3DPRESENT_PARAMETERS*);
-    typedef HRESULT (WINAPI *PresentFn)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*);
-    typedef HRESULT (WINAPI *EndSceneFn)(IDirect3DDevice9*);
-    typedef HRESULT (WINAPI *ChainPresentFn)(IDirect3DSwapChain9*, const RECT*, const RECT*, HWND, const RGNDATA*, DWORD);
-
-    static Direct3DCreateFn g_realDirect3DCreate = nullptr;
-    static CreateDeviceFn g_realCreateDevice = nullptr;
-    static ResetFn g_realReset = nullptr;
-    static PresentFn g_realPresent = nullptr;
-    static EndSceneFn g_realEndScene = nullptr;
-    static ChainPresentFn g_realChainPresent = nullptr;
 
     // What each device did since the last summary.
     struct DeviceStats {
@@ -52,7 +31,6 @@ namespace DisplayTest
     static int g_deviceCount = 0;
     static int g_devicesCreated = 0;
     static DWORD g_lastSummary = 0;
-    static bool g_inPresent = false; // a device Present can go through the swap chain's: draw once
     static CRITICAL_SECTION g_lock;
 
     static DeviceStats& StatsFor(IDirect3DDevice9* device)
@@ -64,28 +42,6 @@ namespace DisplayTest
             return g_devices[g_deviceCount++];
         }
         return g_devices[MAX_DEVICES - 1];
-    }
-
-    // Which file a function is in: d3d9.dll from Windows, DXVK's, or something that wraps it,
-    // such as another overlay. That decides whose code the frames go through.
-    static std::string ModuleOf(void* address)
-    {
-        HMODULE module = nullptr;
-        char path[MAX_PATH] = "unknown";
-        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                               static_cast<LPCSTR>(address), &module) && module)
-            GetModuleFileNameA(module, path, sizeof(path));
-        return path;
-    }
-
-    static bool Hook(void* target, void* detour, void** original, const char* name)
-    {
-        if (MH_CreateHook(target, detour, original) != MH_OK || MH_EnableHook(target) != MH_OK) {
-            Log::Warn("Display test: couldn't hook %s.\n", name);
-            return false;
-        }
-        Log::Event(Log::Tag::Client, "Display test: hooked %s in %s\n", name, ModuleOf(target).c_str());
-        return true;
     }
 
     static void Summary()
@@ -213,107 +169,48 @@ namespace DisplayTest
         LeaveCriticalSection(&g_lock);
     }
 
-    static HRESULT WINAPI PresentHook(IDirect3DDevice9* device, const RECT* source, const RECT* dest, HWND window, const RGNDATA* dirty)
+    static void OnPresent(IDirect3DDevice9* device, IDirect3DSwapChain9* chain)
     {
-        if (!g_inPresent) {
-            g_inPresent = true;
-            ++StatsFor(device).presents;
-            BeforePresent(device, nullptr);
-            const HRESULT result = g_realPresent(device, source, dest, window, dirty);
-            g_inPresent = false;
-            return result;
-        }
-        return g_realPresent(device, source, dest, window, dirty);
-    }
-
-    static HRESULT WINAPI ChainPresentHook(IDirect3DSwapChain9* chain, const RECT* source, const RECT* dest, HWND window, const RGNDATA* dirty, DWORD flags)
-    {
-        IDirect3DDevice9* device = nullptr;
-        if (!g_inPresent && SUCCEEDED(chain->GetDevice(&device)) && device) {
-            g_inPresent = true;
-            ++StatsFor(device).chainPresents;
-            BeforePresent(device, chain);
-            device->Release();
-            const HRESULT result = g_realChainPresent(chain, source, dest, window, dirty, flags);
-            g_inPresent = false;
-            return result;
-        }
-        if (device) device->Release();
-        return g_realChainPresent(chain, source, dest, window, dirty, flags);
+        DeviceStats& stats = StatsFor(device);
+        if (chain) ++stats.chainPresents; else ++stats.presents;
+        BeforePresent(device, chain);
     }
 
     // The green square: on whatever the game drew this scene to.
-    static HRESULT WINAPI EndSceneHook(IDirect3DDevice9* device)
+    static void OnEndScene(IDirect3DDevice9* device)
     {
-        if (!g_inPresent) {
-            ++StatsFor(device).endScenes;
-            IDirect3DSurface9* target = nullptr;
-            if (SUCCEEDED(device->GetRenderTarget(0, &target)) && target) {
-                D3DVIEWPORT9 oldViewport;
-                device->GetViewport(&oldViewport);
-                DWORD scissor = FALSE;
-                device->GetRenderState(D3DRS_SCISSORTESTENABLE, &scissor);
-                D3DSURFACE_DESC desc;
-                if (SUCCEEDED(target->GetDesc(&desc)) && desc.Width >= 460 && desc.Height >= 140) {
-                    D3DVIEWPORT9 whole = {0, 0, desc.Width, desc.Height, 0.0f, 1.0f};
-                    device->SetViewport(&whole);
-                    device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
-                    const D3DRECT green = {250, 40, 450, 140};
-                    device->Clear(1, &green, D3DCLEAR_TARGET, D3DCOLOR_XRGB(0, 200, 0), 1.0f, 0);
-                    device->SetRenderState(D3DRS_SCISSORTESTENABLE, scissor);
-                    device->SetViewport(&oldViewport);
-                }
-                target->Release();
-            }
+        ++StatsFor(device).endScenes;
+        IDirect3DSurface9* target = nullptr;
+        if (FAILED(device->GetRenderTarget(0, &target)) || !target) return;
+        D3DVIEWPORT9 oldViewport;
+        device->GetViewport(&oldViewport);
+        DWORD scissor = FALSE;
+        device->GetRenderState(D3DRS_SCISSORTESTENABLE, &scissor);
+        D3DSURFACE_DESC desc;
+        if (SUCCEEDED(target->GetDesc(&desc)) && desc.Width >= 460 && desc.Height >= 140) {
+            D3DVIEWPORT9 whole = {0, 0, desc.Width, desc.Height, 0.0f, 1.0f};
+            device->SetViewport(&whole);
+            device->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
+            const D3DRECT green = {250, 40, 450, 140};
+            device->Clear(1, &green, D3DCLEAR_TARGET, D3DCOLOR_XRGB(0, 200, 0), 1.0f, 0);
+            device->SetRenderState(D3DRS_SCISSORTESTENABLE, scissor);
+            device->SetViewport(&oldViewport);
         }
-        return g_realEndScene(device);
+        target->Release();
     }
 
-    static HRESULT WINAPI ResetHook(IDirect3DDevice9* device, D3DPRESENT_PARAMETERS* parameters)
+    static void OnReset(IDirect3DDevice9* device)
     {
         ++StatsFor(device).resets;
-        return g_realReset(device, parameters);
     }
 
-    static HRESULT WINAPI CreateDeviceHook(IDirect3D9* d3d, UINT adapter, D3DDEVTYPE type, HWND window, DWORD flags, D3DPRESENT_PARAMETERS* parameters, IDirect3DDevice9** device)
+    static void OnDeviceCreated(IDirect3DDevice9*, HWND, const D3DPRESENT_PARAMETERS* parameters)
     {
-        const HRESULT result = g_realCreateDevice(d3d, adapter, type, window, flags, parameters, device);
         ++g_devicesCreated;
         if (parameters)
-            Log::Event(Log::Tag::Client, "Display test: device %d made (0x%08lX): %ux%u, format %u, %s, %u back buffer(s), swap effect %u, flags 0x%lX\n",
-                       g_devicesCreated, static_cast<unsigned long>(result), parameters->BackBufferWidth, parameters->BackBufferHeight,
-                       static_cast<unsigned>(parameters->BackBufferFormat), parameters->Windowed ? "windowed" : "fullscreen",
-                       parameters->BackBufferCount, static_cast<unsigned>(parameters->SwapEffect), static_cast<unsigned long>(flags));
-        if (FAILED(result) || !device || !*device) return result;
-
-        // Functions are shared by every device, so each is hooked once, in the code itself rather
-        // than in a vtable: that catches every device and anything that calls past the vtable.
-        void** vtable = *reinterpret_cast<void***>(*device);
-        if (!g_realPresent) {
-            Hook(vtable[DEVICE_PRESENT], reinterpret_cast<void*>(PresentHook), reinterpret_cast<void**>(&g_realPresent), "IDirect3DDevice9::Present");
-            Hook(vtable[DEVICE_END_SCENE], reinterpret_cast<void*>(EndSceneHook), reinterpret_cast<void**>(&g_realEndScene), "IDirect3DDevice9::EndScene");
-            Hook(vtable[DEVICE_RESET], reinterpret_cast<void*>(ResetHook), reinterpret_cast<void**>(&g_realReset), "IDirect3DDevice9::Reset");
-        }
-        if (!g_realChainPresent) {
-            IDirect3DSwapChain9* chain = nullptr;
-            if (SUCCEEDED((*device)->GetSwapChain(0, &chain)) && chain) {
-                void** chainVtable = *reinterpret_cast<void***>(chain);
-                Hook(chainVtable[CHAIN_PRESENT], reinterpret_cast<void*>(ChainPresentHook), reinterpret_cast<void**>(&g_realChainPresent),
-                     "IDirect3DSwapChain9::Present");
-                chain->Release();
-            }
-        }
-        return result;
-    }
-
-    static IDirect3D9* WINAPI Direct3DCreateHook(UINT version)
-    {
-        IDirect3D9* d3d = g_realDirect3DCreate(version);
-        if (d3d && !g_realCreateDevice) {
-            void** vtable = *reinterpret_cast<void***>(d3d);
-            Hook(vtable[D3D_CREATE_DEVICE], reinterpret_cast<void*>(CreateDeviceHook), reinterpret_cast<void**>(&g_realCreateDevice), "IDirect3D9::CreateDevice");
-        }
-        return d3d;
+            Log::Event(Log::Tag::Client, "Display test: device %d made: %ux%u, format %u, %s, %u back buffer(s), swap effect %u\n",
+                       g_devicesCreated, parameters->BackBufferWidth, parameters->BackBufferHeight, static_cast<unsigned>(parameters->BackBufferFormat),
+                       parameters->Windowed ? "windowed" : "fullscreen", parameters->BackBufferCount, static_cast<unsigned>(parameters->SwapEffect));
     }
 
     void Init(uintptr_t)
@@ -322,13 +219,18 @@ namespace DisplayTest
         if (settings.empty() || GetPrivateProfileIntA("Debug", "DisplayTest", 0, settings.c_str()) == 0) return;
 
         InitializeCriticalSection(&g_lock);
-        HMODULE d3d9 = GetModuleHandleA("d3d9.dll");
-        void* create = d3d9 ? reinterpret_cast<void*>(GetProcAddress(d3d9, "Direct3DCreate9")) : nullptr;
-        if (!create || MH_Initialize() != MH_OK) {
-            Log::Warn("Display test is off: d3d9.dll isn't loaded, or hooks couldn't start.\n");
+        if (!D3DHooks::Install()) {
+            Log::Warn("Display test is off: the display couldn't be hooked.\n");
             return;
         }
-        Log::Event(Log::Tag::Client, "Display test is on: red, green and blue squares in the top left show which ways of drawing reach the screen\n");
-        Hook(create, reinterpret_cast<void*>(Direct3DCreateHook), reinterpret_cast<void**>(&g_realDirect3DCreate), "Direct3DCreate9");
+        D3DHooks::Listener listener;
+        listener.deviceCreated = OnDeviceCreated;
+        listener.beforeReset = OnReset;
+        listener.beforePresent = OnPresent;
+        listener.beforeEndScene = OnEndScene;
+        D3DHooks::AddListener(listener);
+        HMODULE d3d9 = GetModuleHandleA("d3d9.dll");
+        Log::Event(Log::Tag::Client, "Display test is on, drawing through %s: red, green and blue squares in the top left show which ways of drawing reach the screen\n",
+                   D3DHooks::ModuleOf(reinterpret_cast<void*>(GetProcAddress(d3d9, "Direct3DCreate9"))));
     }
 }
