@@ -18,7 +18,7 @@ Pre-compiled release bundles (`OpenProStreetClient_v*.zip`) containing the ASI p
 
 - **Secure Login**: Encrypts all traffic to an OpenProStreet server, so the game's password isn't sent in plaintext. Your name and password work on any PC. Older servers still work, without encryption.
 - **Race Results**: Sends your lap times, track, race mode and position to the server after each race, for records and leaderboards.
-- **Quick Play**: "Schnelles Spiel" no longer tries EA's closed servers. It opens the server login and lists the same race days as LAN play, so you can join any of them. If no quick play race day is running, it starts one with a random location and events, with AI opponents.
+- **Quick Play**: "Schnelles Spiel" no longer tries EA's closed servers. It logs in to the server and joins a quick play race day by itself. If none is running, the server starts one with a random location and events, with AI opponents. If there's still nothing to join a few seconds after the list shows, the list stays open, with the same race days as LAN play, and you pick one.
 - **Dynamic Status**: Displays whether you are in a race day, navigating menus, or in career.
 - **Player Car Display**: Detects the car currently driven by the player and translates internal models to real vehicle names (e.g. "Nissan GT-R (R35)", "Mazda RX-7", "Chevrolet Corvette Z06", "Toyota Supra").
 - **Race Mode & Event Type**: Identifies specific race types (e.g. "Grip", "Drift", "1/4 Mile Drag", "Wheelie Competition", "Speed Challenge", "Top Speed Run", "Sector Shootout", "Time Attack", "Grip Class").
@@ -66,7 +66,7 @@ Username=YourName
 Password=dpapi:...
 ```
 
-On Windows the password is encrypted for your Windows user, so other users of the PC can't read it from the file. On Linux it's saved as you typed it. If the automatic login fails, the account screen stays open and you log in by hand.
+On Windows the password is encrypted for your Windows user, so other users of the PC can't read it from the file. On Linux it's saved as you typed it. The plugin presses the account screen's "log in" button and then OK for you, once each screen is showing, so you see both screens go by. If the automatic login fails, the log in screen stays open and you log in by hand. Going back to the account screen yourself doesn't log you in again.
 
 ### Choosing a server
 

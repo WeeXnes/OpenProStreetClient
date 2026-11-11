@@ -14,6 +14,7 @@
 
 #include "net/secure_client.h"
 #include "game/car_lock.h"
+#include "game/quick_match.h"
 #include "log.h"
 
 extern const std::string version;
@@ -115,6 +116,10 @@ namespace ServerLink
         // Sent on joining a room: the race day's allowed cars, or nothing for every car.
         if (xml.find("<method> allowedCars") != std::string::npos) {
             CarLock::SetAllowedCars(ParamValue(xml, "cars"));
+        }
+        // During a quick match: the race day the server picked or prepared, or nothing yet.
+        if (xml.find("<method> quickMatchRoom") != std::string::npos) {
+            QuickMatch::SetServerRoom(ParamValue(xml, "gamename"));
         }
     }
 

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <random>
 #include <set>
@@ -11,6 +12,7 @@
 #include <vector>
 
 #include "game/hooks.h"
+#include "game/lan_menu.h"
 #include "game/map.h"
 #include "game/race_mode.h"
 #include "net/server_link.h"
@@ -22,17 +24,47 @@ namespace QuickMatch
     static const uintptr_t MAIN_MENU_ON_OPTION = 0x1CA5E0; // 0x5CA5E0: FEOnlineMainStateManager's menu handler
     static const uintptr_t LAN_ON_GAME_LIST = 0x3E15C0;    // 0x7E15C0: FELanStateManager's game list listener
 
+    static const uintptr_t LAN_JOIN_SELECTED = 0x3D2620; // 0x7D2620: FELanStateManager's join button
+    static const uintptr_t LOBBY_SCREEN = 0x732B60;      // 0xB32B60: the game list screen, while it exists
+
     static const int MENU_STATE_MAIN = 2;       // FEOnlineMainStateManager +0x04 while its menu shows
     static const int OPTION_LAN_PLAY = 0x1F;
     static const int OPTION_QUICK_RANKED = 0x25;
     static const int OPTION_QUICK_UNRANKED = 0x26;
 
+    // FELanStateManager states around the game list.
+    static const int STATE_LOBBY = 0x14;        // the list shows, and the join button works
+    static const int STATE_LOOKING = 0x15;      // asking the server for games
+    static const int STATE_JOINING = 0x17;
+
+    // The list screen's list widget is at +0x20, and its selected entry at +0x18 in that (0x5C0890).
+    // After filling the list, the listener selects the first entry (0x7E1758). An entry's game name
+    // is at +0x18, 64 characters (0x7E06FA), and that's what the join button sends.
+    static const int LOBBY_SELECTED_ENTRY = 0x38;
+    static const int ENTRY_GAME_NAME = 0x18;
+    static const size_t GAME_NAME_SIZE = 64;
+
+    static const int POPUP_REFRESH = 3; // LanMenu::POPUP: 0x5B97F0 asks the screen to refresh after the state change
+
+    // How long after the first list a quick match may wait for its race day, before it's left to the player.
+    static const DWORD JOIN_TIMEOUT_MS = 8000;
+
     static void* g_origOnOption = nullptr;
     static void* g_origOnGameList = nullptr;
     static uintptr_t g_baseModule = 0;
+    static bool g_on = false;
 
-    // Set from the menu until the first game list arrives.
-    static volatile bool g_waitingForRoom = false;
+    // Idle: LAN play as the game has it. Waiting: a quick match from the menu, until it joins a race
+    // day or gives up. Joining: pressing the join button, so the hooks it calls don't press it again.
+    enum Phase { PHASE_IDLE = 0, PHASE_WAITING = 1, PHASE_JOINING = 2 };
+    static volatile LONG g_phase = PHASE_IDLE;
+    static volatile LONG g_generation = 0; // one per quick match, so an old timeout doesn't end a new one
+    static volatile bool g_listArrived = false;
+
+    // The race day the server prepared or picked for this quick match, if it says.
+    static CRITICAL_SECTION g_roomLock;
+    static bool g_serverRoomKnown = false;
+    static std::string g_serverRoom;
 
     // What the game's "create race day" menus are built from (0x56C2E0, 0x56C5E0, 0x56C6C0, 0x578EB0).
     static const uintptr_t CAREER_DB_PTR = 0x6B9DC8;  // 0xAB9DC8
@@ -194,6 +226,93 @@ namespace QuickMatch
 
     typedef void (__attribute__((thiscall)) *OnOptionFn)(void*, int, int);
     typedef void (__attribute__((thiscall)) *OnGameListFn)(void*, void*);
+    typedef int (__attribute__((thiscall)) *ListCountFn)(void*);
+    typedef void (__attribute__((thiscall)) *JoinSelectedFn)(void*);
+
+    static void ForgetServerRoom() {
+        EnterCriticalSection(&g_roomLock);
+        g_serverRoomKnown = false;
+        g_serverRoom.clear();
+        LeaveCriticalSection(&g_roomLock);
+    }
+
+    void SetServerRoom(const std::string& gameName) {
+        if (!g_on) return;
+        EnterCriticalSection(&g_roomLock);
+        g_serverRoomKnown = true;
+        g_serverRoom = gameName;
+        LeaveCriticalSection(&g_roomLock);
+        Log::Debug("[OpenProStreet] Quick match: the server's race day is [%s].\n", gameName.empty() ? "none yet" : gameName.c_str());
+    }
+
+    // A few seconds after the first list, a quick match that couldn't join leaves the list to the player.
+    static DWORD WINAPI JoinTimeout(LPVOID parameter) {
+        const LONG generation = static_cast<LONG>(reinterpret_cast<intptr_t>(parameter));
+        Sleep(JOIN_TIMEOUT_MS);
+        if (g_generation != generation) return 0;
+        if (InterlockedCompareExchange(&g_phase, PHASE_IDLE, PHASE_WAITING) != PHASE_WAITING) return 0;
+        ServerLink::CancelQuickMatch();
+        Log::Debug("[OpenProStreet] Quick match: no race day to join after %lu ms, leaving the list to the player.\n", JOIN_TIMEOUT_MS);
+        Log::Summary(Log::Tag::Match, "no quick play race day to join yet, pick a race day from the list\n");
+        return 0;
+    }
+
+    // What the join button would do, once the list shows and nothing else is changing. The button
+    // (0x7D2620) does nothing outside state 0x14. The list arrives in state 0x15, so pressing it from
+    // the list listener, as versions before 8.2 did, never joined.
+    static void TryJoin(void* manager, const char* from) {
+        if (g_phase != PHASE_WAITING || !g_listArrived) return;
+        if (LanMenu::State(manager) != STATE_LOBBY || !LanMenu::IsSettled(manager)) return;
+        const char* lobby = *reinterpret_cast<const char**>(g_baseModule + LOBBY_SCREEN);
+        if (!lobby) return;
+        const char* entry = *reinterpret_cast<const char* const*>(lobby + LOBBY_SELECTED_ENTRY);
+        if (!entry) return;
+
+        char name[GAME_NAME_SIZE + 1] = {};
+        memcpy(name, entry + ENTRY_GAME_NAME, GAME_NAME_SIZE);
+
+        // The server lists its quick play race day first. When it also says which one that is, only
+        // that one is joined, so a race day a player made is never picked by mistake.
+        EnterCriticalSection(&g_roomLock);
+        const bool known = g_serverRoomKnown;
+        const std::string room = g_serverRoom;
+        LeaveCriticalSection(&g_roomLock);
+        if (known && (room.empty() || _stricmp(room.c_str(), name) != 0)) {
+            Log::Debug("[OpenProStreet] Quick match: the first race day is [%s], the server's is [%s]. Not joining.\n",
+                       name, room.empty() ? "none yet" : room.c_str());
+            return;
+        }
+
+        if (InterlockedCompareExchange(&g_phase, PHASE_JOINING, PHASE_WAITING) != PHASE_WAITING) return;
+        Log::Debug("[OpenProStreet] Quick match: pressing join for [%s] (%s).\n", name, from);
+        reinterpret_cast<JoinSelectedFn>(g_baseModule + LAN_JOIN_SELECTED)(manager);
+        if (LanMenu::State(manager) == STATE_JOINING) {
+            InterlockedExchange(&g_phase, PHASE_IDLE);
+            Log::Event(Log::Tag::Match, "Joining quick play race day %s\n", Log::Highlight(name).c_str());
+        } else {
+            InterlockedExchange(&g_phase, PHASE_WAITING);
+            Log::Debug("[OpenProStreet] Quick match: the join button did nothing (state 0x%X).\n", LanMenu::State(manager));
+        }
+    }
+
+    bool IsOn() {
+        return g_on;
+    }
+
+    // The change back to the list after it arrived ends here (0x5B97F0), with the list filled.
+    void OnStateEntered(void* manager) {
+        if (g_phase != PHASE_WAITING) return;
+        if (LanMenu::State(manager) != STATE_LOBBY || LanMenu::PreviousState(manager) != STATE_LOOKING) return;
+        // 0x5B97F0 goes on after this call. With 3 it asks the screen showing to refresh, which
+        // shouldn't happen to the "joining" popup, so that case waits for the screen to show.
+        if (*reinterpret_cast<int*>(static_cast<char*>(manager) + LanMenu::POPUP) == POPUP_REFRESH) return;
+        TryJoin(manager, "list shown");
+    }
+
+    // Before the game's own slot 74, which goes back to looking for games while the state is 0x14.
+    void OnScreenShown(void* manager) {
+        TryJoin(manager, "screen shown");
+    }
 
     // "Schnelles Spiel" would log in to EA's servers, which are gone. The LAN menu option starts
     // the same kind of child flow from the same place, so quick match takes that path instead.
@@ -205,39 +324,47 @@ namespace QuickMatch
                 const bool ranked = option == OPTION_QUICK_RANKED;
                 Log::Debug("[OpenProStreet] %s quick match: using the OpenProStreet server instead of EA's.\n", ranked ? "Ranked" : "Unranked");
                 Log::Summary(Log::Tag::Match, "%s quick match on the OpenProStreet server\n", ranked ? "ranked" : "unranked");
-                g_waitingForRoom = true;
+                InterlockedIncrement(&g_generation);
+                g_listArrived = false;
+                ForgetServerRoom();
+                InterlockedExchange(&g_phase, PHASE_WAITING);
                 std::string location, events;
                 int difficulty = 0;
                 PickRaceDay(location, difficulty, events);
                 ServerLink::RequestQuickMatch(ranked, location, difficulty, events);
                 option = OPTION_LAN_PLAY;
             } else if (option == OPTION_LAN_PLAY) {
-                g_waitingForRoom = false;
+                InterlockedIncrement(&g_generation);
+                InterlockedExchange(&g_phase, PHASE_IDLE);
                 ServerLink::CancelQuickMatch();
             }
         }
         reinterpret_cast<OnOptionFn>(g_origOnOption)(manager, option, param);
     }
 
-    // Quick play lists the same games as LAN play, and the player picks one. The server makes sure a
-    // quick play race day is among them when it sends the first list, so the quick match is
-    // cancelled then: from there on, joining and creating a race day work as in LAN play.
+    // Quick play lists the same games as LAN play. The server puts its quick play race day first,
+    // and makes one when none is open. The quick match stays on with the server until the player
+    // joins (the server ends it then) or it gives up, so later lists keep that race day first.
     static void __attribute__((thiscall)) OnGameListHook(void* listener, void* games) {
         reinterpret_cast<OnGameListFn>(g_origOnGameList)(listener, games);
-        if (!g_waitingForRoom || !games) return;
-        g_waitingForRoom = false;
-        ServerLink::CancelQuickMatch();
-        Log::Debug("[OpenProStreet] Quick play: the list is in, with a quick play race day.\n");
-        Log::Summary(Log::Tag::Match, "quick play race day ready, pick a race day to join\n");
+        if (g_phase != PHASE_WAITING || !games || g_listArrived) return;
+        g_listArrived = true;
+        const int count = (**reinterpret_cast<ListCountFn**>(games))(games);
+        Log::Debug("[OpenProStreet] Quick match: the list is in, %d race day(s). Joining the first once the list shows.\n", count);
+        Log::Summary(Log::Tag::Match, "list is in, joining the quick play race day\n");
+        HANDLE thread = CreateThread(nullptr, 0, JoinTimeout, reinterpret_cast<LPVOID>(static_cast<intptr_t>(g_generation)), 0, nullptr);
+        if (thread) CloseHandle(thread);
     }
 
     void Init(uintptr_t baseModule) {
         g_baseModule = baseModule;
+        InitializeCriticalSection(&g_roomLock);
         const std::string& settings = Log::SettingsPath();
         g_dumpEvents = !settings.empty() && GetPrivateProfileIntA("Debug", "DumpEvents", 0, settings.c_str()) != 0;
         const bool ok =
             Hooks::InstallDetour((void*)(baseModule + MAIN_MENU_ON_OPTION), (void*)OnOptionHook, &g_origOnOption) &&
             Hooks::InstallDetour((void*)(baseModule + LAN_ON_GAME_LIST), (void*)OnGameListHook, &g_origOnGameList);
+        g_on = ok;
         if (ok) Log::Debug("[OpenProStreet] Quick match hooks installed.\n");
         else Log::Error("Could not install the quick match hooks.\n");
     }

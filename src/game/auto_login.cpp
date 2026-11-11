@@ -7,23 +7,31 @@
 #include <string>
 #include <vector>
 
+#include "game/lan_menu.h"
 #include "log.h"
 
 namespace AutoLogin
 {
     // FELanStateManager in nfs.exe v1.1, as offsets from the image base.
     //
-    // Changing state stores the new one at +0x04 and calls vtable slot 80 (0x9A2BE4, 0x7D2180),
-    // which sets up the state's screen. State 6 is the account screen: "create account" (state
-    // 0x0F) or "log in" (state 7). On the log in screen, its button calls 0x7D2830 with the name and
-    // password fields; that shows "logging in" (state 8) and starts netcodeLoginSystem::BeginLogin.
+    // State 6 is the account screen: "create account" (state 0x0F) or "log in" (state 7). Its "log
+    // in" button (0x7E13E5) changes to the log in screen with 0x5C4320(manager, *0xA894FC, 7, 1).
+    // That screen sets 0xB32B5C while it exists, and its OK button (0x7E1447) calls 0x7D2830 with
+    // the name and password fields: "logging in" (state 8), then netcodeLoginSystem::BeginLogin.
     // The login system's answer moves the manager to 0x14 when it worked, or to one of the error
     // messages, 0x0A to 0x0D, when it didn't.
-    static const uintptr_t STATE_ENTERED_SLOT = 0x5A2BE4; // 0x9A2BE4
-    static const uintptr_t STATE_ENTERED = 0x3D2180;      // 0x7D2180
-    static const uintptr_t LAN_LOGIN = 0x3D2830;          // 0x7D2830
+    //
+    // Version 9.7 called 0x7D2830 as state 6 was entered, before the account screen was loaded. That
+    // started a second screen change inside the first one, and could leave the "logging in" popup
+    // over the lobby, holding the input. So this presses the same two buttons the player would, each
+    // once its screen is showing and nothing else is changing.
+    static const uintptr_t CHANGE_SCREEN = 0x1C4320;   // 0x5C4320
+    static const uintptr_t LOG_IN_SCREEN = 0x6894FC;   // 0xA894FC: the log in screen's package name
+    static const uintptr_t LOG_IN_SCREEN_OBJECT = 0x732B5C; // 0xB32B5C
+    static const uintptr_t LAN_LOGIN = 0x3D2830;       // 0x7D2830
 
     static const int STATE_ACCOUNT_SCREEN = 6;
+    static const int STATE_LOG_IN_SCREEN = 7;
     static const int STATE_LOGGED_IN = 0x14;
     static const int STATE_LOGIN_ERROR_FIRST = 0x0A;
     static const int STATE_LOGIN_ERROR_LAST = 0x0D;
@@ -32,18 +40,20 @@ namespace AutoLogin
     static const char* const PROTECTED_PREFIX = "dpapi:";
     static const char* const ENTROPY = "OpenProStreet login";
 
-    typedef void (__attribute__((thiscall)) *StateEnteredFn)(void*);
+    typedef void (__attribute__((thiscall)) *ChangeScreenFn)(void*, const char*, int, int);
     typedef void (__attribute__((thiscall)) *LanLoginFn)(void*, const char*, const char*);
 
-    static StateEnteredFn g_stateEntered = nullptr;
-    static LanLoginFn g_lanLogin = nullptr;
+    static uintptr_t g_baseModule = 0;
+    static bool g_on = false;
 
     // The game keeps the pointers it's given, so these stay allocated.
     static std::string g_username;
     static std::string g_password;
 
-    static bool g_waiting = false; // a login this sent hasn't been answered yet
-    static bool g_gaveUp = false;  // it failed, so the player logs in by hand until one works
+    static bool g_pressedLogIn = true;  // on this visit to the account screen; reset on arriving there
+    static bool g_pressedOk = false;    // on this visit to the log in screen
+    static bool g_waiting = false;      // a login this sent hasn't been answered yet
+    static bool g_gaveUp = false;       // it failed, so the player logs in by hand until one works
 
     static std::vector<unsigned char> FromBase64(const std::string& text)
     {
@@ -76,44 +86,60 @@ namespace AutoLogin
         return true;
     }
 
-    static void __attribute__((thiscall)) StateEnteredHook(void* manager)
+    bool IsOn()
     {
-        g_stateEntered(manager);
-
-        const int state = *reinterpret_cast<int*>(static_cast<char*>(manager) + 4);
-        if (state == STATE_LOGGED_IN)
-        {
-            g_waiting = false;
-            g_gaveUp = false;
-            return;
-        }
-        if (state >= STATE_LOGIN_ERROR_FIRST && state <= STATE_LOGIN_ERROR_LAST)
-        {
-            if (g_waiting)
-            {
-                g_waiting = false;
-                g_gaveUp = true;
-                Log::Warn("Automatic login as %s didn't work. Log in by hand, or check the name and password in the launcher.\n",
-                          g_username.c_str());
-            }
-            return;
-        }
-        if (state != STATE_ACCOUNT_SCREEN || g_gaveUp || g_waiting) return;
-
-        g_waiting = true;
-        Log::Event(Log::Tag::Client, "Logging in automatically as %s\n", Log::Highlight(g_username).c_str());
-        g_lanLogin(manager, g_username.c_str(), g_password.c_str());
+        return g_on;
     }
 
-    static bool PatchPointer(uintptr_t slot, uintptr_t expected, uintptr_t value)
+    // Only notes where the menus are. Nothing is pressed from here: the state's screen isn't loaded yet.
+    void OnStateEntered(void* manager)
     {
-        uintptr_t* p = reinterpret_cast<uintptr_t*>(slot);
-        if (IsBadReadPtr(p, sizeof(*p)) || *p != expected) return false;
-        DWORD oldProtect;
-        if (!VirtualProtect(p, sizeof(*p), PAGE_READWRITE, &oldProtect)) return false;
-        *p = value;
-        VirtualProtect(p, sizeof(*p), oldProtect, &oldProtect);
-        return true;
+        if (!g_on) return;
+        const int state = LanMenu::State(manager);
+        // Only on arriving from connecting (states 0 to 5). A player who goes back from the log in
+        // or create account screen wants the account screen, not to be sent on again.
+        if (state == STATE_ACCOUNT_SCREEN)
+        {
+            if (LanMenu::PreviousState(manager) < STATE_ACCOUNT_SCREEN) g_pressedLogIn = false;
+        }
+        else if (state < STATE_ACCOUNT_SCREEN) g_waiting = false; // connecting again: that login is gone
+        else if (state == STATE_LOG_IN_SCREEN) g_pressedOk = false;
+        else if (state == STATE_LOGGED_IN)
+        {
+            if (g_waiting) Log::Debug("[OpenProStreet] Automatic login: logged in.\n");
+            g_waiting = false;
+            g_gaveUp = false;
+        }
+        else if (state >= STATE_LOGIN_ERROR_FIRST && state <= STATE_LOGIN_ERROR_LAST && g_waiting)
+        {
+            g_waiting = false;
+            g_gaveUp = true;
+            Log::Warn("Automatic login as %s didn't work. Log in by hand, or check the name and password in the launcher.\n",
+                      g_username.c_str());
+        }
+    }
+
+    void OnScreenShown(void* manager)
+    {
+        if (!g_on || g_gaveUp || g_waiting || !LanMenu::IsSettled(manager)) return;
+        const int state = LanMenu::State(manager);
+
+        if (state == STATE_ACCOUNT_SCREEN && !g_pressedLogIn)
+        {
+            const char* screen = *reinterpret_cast<const char**>(g_baseModule + LOG_IN_SCREEN);
+            if (!screen) return;
+            g_pressedLogIn = true;
+            Log::Debug("[OpenProStreet] Automatic login: opening the log in screen.\n");
+            reinterpret_cast<ChangeScreenFn>(g_baseModule + CHANGE_SCREEN)(manager, screen, STATE_LOG_IN_SCREEN, 1);
+        }
+        else if (state == STATE_LOG_IN_SCREEN && !g_pressedOk)
+        {
+            if (!*reinterpret_cast<void**>(g_baseModule + LOG_IN_SCREEN_OBJECT)) return;
+            g_pressedOk = true;
+            g_waiting = true;
+            Log::Event(Log::Tag::Client, "Logging in automatically as %s\n", Log::Highlight(g_username).c_str());
+            reinterpret_cast<LanLoginFn>(g_baseModule + LAN_LOGIN)(manager, g_username.c_str(), g_password.c_str());
+        }
     }
 
     void Init(uintptr_t baseModule)
@@ -139,13 +165,8 @@ namespace AutoLogin
         }
         SecureZeroMemory(stored, sizeof(stored));
 
-        g_lanLogin = reinterpret_cast<LanLoginFn>(baseModule + LAN_LOGIN);
-        g_stateEntered = reinterpret_cast<StateEnteredFn>(baseModule + STATE_ENTERED);
-        if (!PatchPointer(baseModule + STATE_ENTERED_SLOT, baseModule + STATE_ENTERED, reinterpret_cast<uintptr_t>(StateEnteredHook)))
-        {
-            Log::Warn("Automatic login is off: the LAN menu isn't what the client expects.\n");
-            return;
-        }
+        g_baseModule = baseModule;
+        g_on = true; // it acts through LanMenu's hooks, which warn if they can't be installed
         Log::Event(Log::Tag::Client, "Automatic login as %s is on\n", Log::Highlight(g_username).c_str());
     }
 }
