@@ -29,6 +29,7 @@ namespace AutoLogin
     static const uintptr_t LOG_IN_SCREEN = 0x6894FC;   // 0xA894FC: the log in screen's package name
     static const uintptr_t LOG_IN_SCREEN_OBJECT = 0x732B5C; // 0xB32B5C
     static const uintptr_t LAN_LOGIN = 0x3D2830;       // 0x7D2830
+    static const uintptr_t MANAGER_VTABLE = 0x5A2AA4;  // 0x9A2AA4: FELanStateManager's vtable
 
     static const int STATE_ACCOUNT_SCREEN = 6;
     static const int STATE_LOG_IN_SCREEN = 7;
@@ -91,10 +92,13 @@ namespace AutoLogin
         return g_on;
     }
 
+    static void CancelPress();
+
     // Only notes where the menus are. Nothing is pressed from here: the state's screen isn't loaded yet.
     void OnStateEntered(void* manager)
     {
         if (!g_on) return;
+        CancelPress(); // the menus moved on, so a press waiting for the last screen is stale
         const int state = LanMenu::State(manager);
         // Only on arriving from connecting (states 0 to 5). A player who goes back from the log in
         // or create account screen wants the account screen, not to be sent on again.
@@ -119,7 +123,8 @@ namespace AutoLogin
         }
     }
 
-    void OnScreenShown(void* manager)
+    // Presses the button for the screen showing, if it still wants pressing.
+    static void Press(void* manager)
     {
         if (!g_on || g_gaveUp || g_waiting || !LanMenu::IsSettled(manager)) return;
         const int state = LanMenu::State(manager);
@@ -139,6 +144,57 @@ namespace AutoLogin
             g_waiting = true;
             Log::Event(Log::Tag::Client, "Logging in automatically as %s\n", Log::Highlight(g_username).c_str());
             reinterpret_cast<LanLoginFn>(g_baseModule + LAN_LOGIN)(manager, g_username.c_str(), g_password.c_str());
+        }
+    }
+
+    // "Screen shown" comes as a screen starts to fade in. Pressing its button right then cut the
+    // screen off mid-animation and sometimes left the menus half changed, so each press waits
+    // until the screen has been up for a moment, as a player's would.
+    //
+    // The wait is a thread timer: the game's own message loop (PeekMessageA, DispatchMessageA)
+    // runs it, on the same thread as the menus, so the press happens between two frames.
+    static const UINT PRESS_DELAY_MS = 700;
+    static UINT_PTR g_timer = 0;
+    static void* g_pendingManager = nullptr;
+    static DWORD g_menuThread = 0;
+
+    static void CancelPress()
+    {
+        if (g_timer) KillTimer(nullptr, g_timer);
+        g_timer = 0;
+        g_pendingManager = nullptr;
+    }
+
+    static void CALLBACK PressTimer(HWND, UINT, UINT_PTR id, DWORD)
+    {
+        KillTimer(nullptr, id);
+        if (id != g_timer) return;
+        g_timer = 0;
+        void* manager = g_pendingManager;
+        g_pendingManager = nullptr;
+        // Only from the thread the menus run on, and only while the menus are still there.
+        if (!manager || GetCurrentThreadId() != g_menuThread) return;
+        if (IsBadReadPtr(manager, sizeof(uintptr_t)) || *static_cast<uintptr_t*>(manager) != g_baseModule + MANAGER_VTABLE) return;
+        Press(manager);
+    }
+
+    void OnScreenShown(void* manager)
+    {
+        if (!g_on || g_gaveUp || g_waiting || !LanMenu::IsSettled(manager)) return;
+        const int state = LanMenu::State(manager);
+        const bool wantsPress = (state == STATE_ACCOUNT_SCREEN && !g_pressedLogIn) ||
+                                (state == STATE_LOG_IN_SCREEN && !g_pressedOk);
+        if (!wantsPress) return;
+
+        CancelPress();
+        g_menuThread = GetCurrentThreadId();
+        g_pendingManager = manager;
+        g_timer = SetTimer(nullptr, 0, PRESS_DELAY_MS, PressTimer);
+        if (!g_timer)
+        {
+            // No timer: press now, as earlier versions did.
+            g_pendingManager = nullptr;
+            Press(manager);
         }
     }
 
