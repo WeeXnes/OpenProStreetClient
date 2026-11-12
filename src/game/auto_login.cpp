@@ -15,21 +15,24 @@ namespace AutoLogin
     // FELanStateManager in nfs.exe v1.1, as offsets from the image base.
     //
     // State 6 is the account screen: "create account" (state 0x0F) or "log in" (state 7). Its "log
-    // in" button (0x7E13E5) changes to the log in screen with 0x5C4320(manager, *0xA894FC, 7, 1).
-    // That screen sets 0xB32B5C while it exists, and its OK button (0x7E1447) calls 0x7D2830 with
-    // the name and password fields: "logging in" (state 8), then netcodeLoginSystem::BeginLogin.
-    // The login system's answer moves the manager to 0x14 when it worked, or to one of the error
-    // messages, 0x0A to 0x0D, when it didn't.
+    // in" button (0x7E13E5) opens the log in screen with 0x5C4320(manager, *0xA894FC, 7, 1), from the
+    // call at 0x7E13F2. That screen's OK button (0x7E1447) passes the typed name and password to
+    // 0x7D2830, which only shows "logging in" (state 8, 0x5C43E0) and starts
+    // netcodeLoginSystem::BeginLogin. The answer moves the manager to 0x14 when the login worked, or
+    // to one of the error messages, 0x0A to 0x0D, when it didn't.
     //
-    // Version 9.7 called 0x7D2830 as state 6 was entered, before the account screen was loaded. That
-    // started a second screen change inside the first one, and could leave the "logging in" popup
-    // over the lobby, holding the input. So this presses the same two buttons the player would, each
-    // once its screen is showing and nothing else is changing.
-    static const uintptr_t CHANGE_SCREEN = 0x1C4320;   // 0x5C4320
-    static const uintptr_t LOG_IN_SCREEN = 0x6894FC;   // 0xA894FC: the log in screen's package name
-    static const uintptr_t LOG_IN_SCREEN_OBJECT = 0x732B5C; // 0xB32B5C
-    static const uintptr_t LAN_LOGIN = 0x3D2830;       // 0x7D2830
-    static const uintptr_t MANAGER_VTABLE = 0x5A2AA4;  // 0x9A2AA4: FELanStateManager's vtable
+    // With automatic login on, the "log in" button's call goes to LogInPressed instead, which calls
+    // 0x7D2830 with the saved account. The player still presses "log in" themselves, so it runs from
+    // the button, with the account screen showing, as the OK button's call does. Nothing waits for
+    // a screen or presses anything: earlier versions pressed the buttons for the player, which
+    // raced the screens' fades. The log in screen is never opened, and everything that reads it
+    // (0x7D21FC, 0x7E1447) checks that it exists first.
+    static const uintptr_t LOG_IN_BUTTON_CALL = 0x3E13F2; // 0x7E13F2: call 0x5C4320
+    static const uintptr_t CHANGE_SCREEN = 0x1C4320;      // 0x5C4320
+    static const uintptr_t LAN_LOGIN = 0x3D2830;          // 0x7D2830
+
+    // The instructions before the call: push 1 / push 7 / push ecx / mov ecx,esi.
+    static const uint8_t LOG_IN_BUTTON_ARGS[] = { 0x6A, 0x01, 0x6A, 0x07, 0x51, 0x8B, 0xCE };
 
     static const int STATE_ACCOUNT_SCREEN = 6;
     static const int STATE_LOG_IN_SCREEN = 7;
@@ -51,10 +54,8 @@ namespace AutoLogin
     static std::string g_username;
     static std::string g_password;
 
-    static bool g_pressedLogIn = true;  // on this visit to the account screen; reset on arriving there
-    static bool g_pressedOk = false;    // on this visit to the log in screen
-    static bool g_waiting = false;      // a login this sent hasn't been answered yet
-    static bool g_gaveUp = false;       // it failed, so the player logs in by hand until one works
+    static bool g_waiting = false; // a login this sent hasn't been answered yet
+    static bool g_gaveUp = false;  // it failed, so "log in" opens the log in screen until a login works
 
     static std::vector<unsigned char> FromBase64(const std::string& text)
     {
@@ -92,22 +93,24 @@ namespace AutoLogin
         return g_on;
     }
 
-    static void CancelPress();
+    // Replaces the "log in" button's screen change. Anything else it might be asked for goes on as before.
+    static void __attribute__((thiscall)) LogInPressed(void* manager, const char* screen, int state, int popup)
+    {
+        if (g_on && !g_gaveUp && !g_waiting && state == STATE_LOG_IN_SCREEN)
+        {
+            g_waiting = true;
+            Log::Event(Log::Tag::Client, "Logging in as %s\n", Log::Highlight(g_username).c_str());
+            reinterpret_cast<LanLoginFn>(g_baseModule + LAN_LOGIN)(manager, g_username.c_str(), g_password.c_str());
+            return;
+        }
+        reinterpret_cast<ChangeScreenFn>(g_baseModule + CHANGE_SCREEN)(manager, screen, state, popup);
+    }
 
-    // Only notes where the menus are. Nothing is pressed from here: the state's screen isn't loaded yet.
     void OnStateEntered(void* manager)
     {
         if (!g_on) return;
-        CancelPress(); // the menus moved on, so a press waiting for the last screen is stale
         const int state = LanMenu::State(manager);
-        // Only on arriving from connecting (states 0 to 5). A player who goes back from the log in
-        // or create account screen wants the account screen, not to be sent on again.
-        if (state == STATE_ACCOUNT_SCREEN)
-        {
-            if (LanMenu::PreviousState(manager) < STATE_ACCOUNT_SCREEN) g_pressedLogIn = false;
-        }
-        else if (state < STATE_ACCOUNT_SCREEN) g_waiting = false; // connecting again: that login is gone
-        else if (state == STATE_LOG_IN_SCREEN) g_pressedOk = false;
+        if (state < STATE_ACCOUNT_SCREEN) g_waiting = false; // connecting again: that login is gone
         else if (state == STATE_LOGGED_IN)
         {
             if (g_waiting) Log::Debug("[OpenProStreet] Automatic login: logged in.\n");
@@ -118,84 +121,27 @@ namespace AutoLogin
         {
             g_waiting = false;
             g_gaveUp = true;
-            Log::Warn("Automatic login as %s didn't work. Log in by hand, or check the name and password in the launcher.\n",
+            Log::Warn("Logging in as %s didn't work. Press \"log in\" again to type the name and password, or check them in the launcher.\n",
                       g_username.c_str());
         }
     }
 
-    // Presses the button for the screen showing, if it still wants pressing.
-    static void Press(void* manager)
+    // Points the "log in" button's call at LogInPressed, if it's the call v1.1 has there.
+    static bool PatchLogInButton()
     {
-        if (!g_on || g_gaveUp || g_waiting || !LanMenu::IsSettled(manager)) return;
-        const int state = LanMenu::State(manager);
+        uint8_t* call = reinterpret_cast<uint8_t*>(g_baseModule + LOG_IN_BUTTON_CALL);
+        if (memcmp(call - sizeof(LOG_IN_BUTTON_ARGS), LOG_IN_BUTTON_ARGS, sizeof(LOG_IN_BUTTON_ARGS)) != 0 || call[0] != 0xE8) return false;
+        int32_t rel;
+        memcpy(&rel, call + 1, 4);
+        if (reinterpret_cast<uintptr_t>(call) + 5 + rel != g_baseModule + CHANGE_SCREEN) return false;
 
-        if (state == STATE_ACCOUNT_SCREEN && !g_pressedLogIn)
-        {
-            const char* screen = *reinterpret_cast<const char**>(g_baseModule + LOG_IN_SCREEN);
-            if (!screen) return;
-            g_pressedLogIn = true;
-            Log::Debug("[OpenProStreet] Automatic login: opening the log in screen.\n");
-            reinterpret_cast<ChangeScreenFn>(g_baseModule + CHANGE_SCREEN)(manager, screen, STATE_LOG_IN_SCREEN, 1);
-        }
-        else if (state == STATE_LOG_IN_SCREEN && !g_pressedOk)
-        {
-            if (!*reinterpret_cast<void**>(g_baseModule + LOG_IN_SCREEN_OBJECT)) return;
-            g_pressedOk = true;
-            g_waiting = true;
-            Log::Event(Log::Tag::Client, "Logging in automatically as %s\n", Log::Highlight(g_username).c_str());
-            reinterpret_cast<LanLoginFn>(g_baseModule + LAN_LOGIN)(manager, g_username.c_str(), g_password.c_str());
-        }
-    }
-
-    // "Screen shown" comes as a screen starts to fade in. Pressing its button right then cut the
-    // screen off mid-animation and sometimes left the menus half changed, so each press waits
-    // until the screen has been up for a moment, as a player's would.
-    //
-    // The wait is a thread timer: the game's own message loop (PeekMessageA, DispatchMessageA)
-    // runs it, on the same thread as the menus, so the press happens between two frames.
-    static const UINT PRESS_DELAY_MS = 700;
-    static UINT_PTR g_timer = 0;
-    static void* g_pendingManager = nullptr;
-    static DWORD g_menuThread = 0;
-
-    static void CancelPress()
-    {
-        if (g_timer) KillTimer(nullptr, g_timer);
-        g_timer = 0;
-        g_pendingManager = nullptr;
-    }
-
-    static void CALLBACK PressTimer(HWND, UINT, UINT_PTR id, DWORD)
-    {
-        KillTimer(nullptr, id);
-        if (id != g_timer) return;
-        g_timer = 0;
-        void* manager = g_pendingManager;
-        g_pendingManager = nullptr;
-        // Only from the thread the menus run on, and only while the menus are still there.
-        if (!manager || GetCurrentThreadId() != g_menuThread) return;
-        if (IsBadReadPtr(manager, sizeof(uintptr_t)) || *static_cast<uintptr_t*>(manager) != g_baseModule + MANAGER_VTABLE) return;
-        Press(manager);
-    }
-
-    void OnScreenShown(void* manager)
-    {
-        if (!g_on || g_gaveUp || g_waiting || !LanMenu::IsSettled(manager)) return;
-        const int state = LanMenu::State(manager);
-        const bool wantsPress = (state == STATE_ACCOUNT_SCREEN && !g_pressedLogIn) ||
-                                (state == STATE_LOG_IN_SCREEN && !g_pressedOk);
-        if (!wantsPress) return;
-
-        CancelPress();
-        g_menuThread = GetCurrentThreadId();
-        g_pendingManager = manager;
-        g_timer = SetTimer(nullptr, 0, PRESS_DELAY_MS, PressTimer);
-        if (!g_timer)
-        {
-            // No timer: press now, as earlier versions did.
-            g_pendingManager = nullptr;
-            Press(manager);
-        }
+        DWORD oldProtect;
+        if (!VirtualProtect(call + 1, 4, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
+        const int32_t hookRel = static_cast<int32_t>(reinterpret_cast<uintptr_t>(&LogInPressed) - (reinterpret_cast<uintptr_t>(call) + 5));
+        memcpy(call + 1, &hookRel, 4);
+        VirtualProtect(call + 1, 4, oldProtect, &oldProtect);
+        FlushInstructionCache(GetCurrentProcess(), call, 5);
+        return true;
     }
 
     void Init(uintptr_t baseModule)
@@ -222,7 +168,13 @@ namespace AutoLogin
         SecureZeroMemory(stored, sizeof(stored));
 
         g_baseModule = baseModule;
-        g_on = true; // it acts through LanMenu's hooks, which warn if they can't be installed
-        Log::Event(Log::Tag::Client, "Automatic login as %s is on\n", Log::Highlight(g_username).c_str());
+        if (!PatchLogInButton())
+        {
+            Log::Warn("Automatic login is off: the account screen's \"log in\" button isn't where it's expected.\n");
+            return;
+        }
+        g_on = true;
+        Log::Event(Log::Tag::Client, "Automatic login as %s is on: press \"log in\" and the saved account is used\n",
+                   Log::Highlight(g_username).c_str());
     }
 }

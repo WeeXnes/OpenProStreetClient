@@ -67,11 +67,10 @@ namespace LanMenu
         QuickMatch::OnStateEntered(manager);
     }
 
-    // Both act before the game's own code, which only moves on from 0x14 while the state is still 0x14.
+    // Quick match acts before the game's own code, which only moves on from 0x14 while the state is still 0x14.
     static void __attribute__((thiscall)) ScreenShownHook(void* manager)
     {
         LogCall("screen shown", manager);
-        AutoLogin::OnScreenShown(manager);
         QuickMatch::OnScreenShown(manager);
         g_screenShown(manager);
     }
