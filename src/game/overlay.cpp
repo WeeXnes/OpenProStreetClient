@@ -236,6 +236,10 @@ namespace Overlay
         {
             snprintf(buffer, sizeof(buffer), "%.0f pts", value);
         }
+        else if (metric == "wheelie")
+        {
+            snprintf(buffer, sizeof(buffer), "%.0f m", value); // the longest wheelie, as the game shows it
+        }
         else
         {
             snprintf(buffer, sizeof(buffer), "%.1f km/h", value);
@@ -248,6 +252,7 @@ namespace Overlay
         if (b.metric == "best_lap") return "BEST LAP";
         if (b.metric == "race_time") return b.laps == 1 ? "RACE TIME \xC2\xB7 1 LAP" : "RACE TIME \xC2\xB7 " + std::to_string(b.laps) + " LAPS";
         if (b.metric == "score") return "SCORE";
+        if (b.metric == "wheelie") return "LONGEST WHEELIE";
         return "TOP SPEED";
     }
 
