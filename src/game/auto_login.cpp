@@ -37,8 +37,12 @@ namespace AutoLogin
     static const int STATE_ACCOUNT_SCREEN = 6;
     static const int STATE_LOG_IN_SCREEN = 7;
     static const int STATE_LOGGED_IN = 0x14;
+    // 0x7D2870 turns the login system's error into a message: 0x0B for dbUnknownPlayer, 0x0C for
+    // dbIncorrectPassword, 0x0D for dbPlayerAlreadyLoggedIn, and 0x0A for anything else.
     static const int STATE_LOGIN_ERROR_FIRST = 0x0A;
     static const int STATE_LOGIN_ERROR_LAST = 0x0D;
+    static const int STATE_UNKNOWN_PLAYER = 0x0B;
+    static const int STATE_WRONG_PASSWORD = 0x0C;
 
     // What the launcher's DPAPI-protected passwords start with. Anything else is the password itself.
     static const char* const PROTECTED_PREFIX = "dpapi:";
@@ -55,7 +59,7 @@ namespace AutoLogin
     static std::string g_password;
 
     static bool g_waiting = false; // a login this sent hasn't been answered yet
-    static bool g_gaveUp = false;  // it failed, so "log in" opens the log in screen until a login works
+    static bool g_gaveUp = false;  // the saved account is wrong, so "log in" opens the log in screen until a login works
 
     static std::vector<unsigned char> FromBase64(const std::string& text)
     {
@@ -96,7 +100,7 @@ namespace AutoLogin
     // Replaces the "log in" button's screen change. Anything else it might be asked for goes on as before.
     static void __attribute__((thiscall)) LogInPressed(void* manager, const char* screen, int state, int popup)
     {
-        if (g_on && !g_gaveUp && !g_waiting && state == STATE_LOG_IN_SCREEN)
+        if (g_on && !g_gaveUp && state == STATE_LOG_IN_SCREEN)
         {
             g_waiting = true;
             Log::Event(Log::Tag::Client, "Logging in as %s\n", Log::Highlight(g_username).c_str());
@@ -120,9 +124,18 @@ namespace AutoLogin
         else if (state >= STATE_LOGIN_ERROR_FIRST && state <= STATE_LOGIN_ERROR_LAST && g_waiting)
         {
             g_waiting = false;
-            g_gaveUp = true;
-            Log::Warn("Logging in as %s didn't work. Press \"log in\" again to type the name and password, or check them in the launcher.\n",
-                      g_username.c_str());
+            // Only a wrong name or password sends the player to the log in screen. Anything else,
+            // like the server still holding an earlier login, is tried again on the next press.
+            if (state == STATE_UNKNOWN_PLAYER || state == STATE_WRONG_PASSWORD)
+            {
+                g_gaveUp = true;
+                Log::Warn("The saved name or password for %s is wrong. Press \"log in\" again to type them, or fix them in the launcher.\n",
+                          g_username.c_str());
+            }
+            else
+            {
+                Log::Warn("Logging in as %s didn't work this time. Press \"log in\" to try again.\n", g_username.c_str());
+            }
         }
     }
 
