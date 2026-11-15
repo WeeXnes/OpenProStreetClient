@@ -448,16 +448,20 @@ namespace Atmosphere
     // starry night.
     static int   g_presetSky[3] = {0, 11, 15};
 
-    // The game asks for its track's sky as it loads: a chosen style replaces it.
+    // The game asks for its track's sky every frame (from 0x7765F7), and the switch only reloads when the
+    // style differs from the last. A chosen style replaces the track's here, on the game's own thread.
     static void __cdecl SetSkyStyleHook(int style, int envmap, float value)
     {
+        static int loggedSky = -1, loggedStyle = -1;
         const int sky = g_skyOverride.load();
-        if (sky > 0) {
-            Log::Event(Log::Tag::Client, "Atmosphere: sky style %d instead of the track's %d\n", sky, style);
-            g_realSetSkyStyle(sky, sky, value);
-        } else {
-            g_realSetSkyStyle(style, envmap, value);
+        if (sky != loggedSky || style != loggedStyle) {
+            loggedSky = sky;
+            loggedStyle = style;
+            if (sky > 0) Log::Event(Log::Tag::Client, "Atmosphere: sky style %d instead of the track's %d\n", sky, style);
+            else Log::Event(Log::Tag::Client, "Atmosphere: the track's own sky, style %d\n", style);
         }
+        if (sky > 0) g_realSetSkyStyle(sky, sky, value);
+        else g_realSetSkyStyle(style, envmap, value);
     }
 
     // The sky only changes when the game switches it itself, as a track loads. Calling the switch from
