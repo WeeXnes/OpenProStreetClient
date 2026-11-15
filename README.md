@@ -161,7 +161,7 @@ FFSKYCOLOR=0.15,0.18,0.3
 cfBrightness=0.55
 ```
 
-The defaults also tint `cvInstanceWorldSunColour`, `cvAmbientColour`, `FogColor` and `cfBloomScale`. `[Atmosphere.Dusk]` works the same way. With `Log=1`, the detailed log names the parameters and the values the game sets, and marks the ones a look changes.
+The defaults also tint `cvInstanceWorldSunColour`, `cvAmbientColour`, `FogColor` and `cfBloomScale`, and the car's own light: `cmLocalColourMatrix` (a colour per row), `cvLightColour` and `cvSpecularColour`. `[Atmosphere.Dusk]` works the same way. With `Log=1`, the detailed log names each parameter, the effect it belongs to and the value the game first sets, and marks the ones a look changes. The game sets nearly all of them with `ID3DXEffect::SetRawValue`.
 
 ### Display test
 

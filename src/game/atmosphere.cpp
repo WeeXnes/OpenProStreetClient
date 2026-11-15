@@ -97,7 +97,8 @@ namespace Atmosphere
     // Which g_names entry each effect's parameter handle is, or -1: asking the effect for a name on
     // every call would cost too much, as the game sets thousands of values a frame.
     static std::unordered_map<void*, std::unordered_map<Handle, int>> g_slots;
-    static std::set<std::string> g_logged;
+    static std::set<std::string> g_logged; // effect|parameter, each listed once
+    static std::unordered_map<void*, std::string> g_effectNames;
     static CRITICAL_SECTION g_lock; // the game may free effects off its render thread
 
     struct Guard
@@ -113,8 +114,10 @@ namespace Atmosphere
         float night[4];
     };
 
-    // A first guess, to be tuned in the game: warm and low at dusk, dim and blue at night. The world's
-    // baked light isn't touched by default, as its parameters' meaning isn't known yet.
+    // Tuned from the first test in the game: warm and low at dusk, dim and blue at night. The world's
+    // baked light isn't touched, as its parameters' meaning isn't known yet. The car has lights of its
+    // own: cmLocalColourMatrix holds their colours, a row each, and cvLightColour and cvSpecularColour
+    // light its paint.
     static const Default DEFAULTS[] = {
         {"cvWorldSunColour",         {1.00f, 0.62f, 0.40f, 1.0f}, {0.16f, 0.20f, 0.36f, 1.0f}},
         {"cvInstanceWorldSunColour", {1.00f, 0.62f, 0.40f, 1.0f}, {0.16f, 0.20f, 0.36f, 1.0f}},
@@ -124,6 +127,9 @@ namespace Atmosphere
         {"FogColor",                 {0.95f, 0.60f, 0.45f, 1.0f}, {0.12f, 0.14f, 0.24f, 1.0f}},
         {"FFSKYCOLOR",               {0.95f, 0.62f, 0.48f, 1.0f}, {0.15f, 0.18f, 0.30f, 1.0f}},
         {"cfBloomScale",             {1.00f, 1.00f, 1.00f, 1.0f}, {0.60f, 1.00f, 1.00f, 1.0f}},
+        {"cmLocalColourMatrix",      {1.00f, 0.70f, 0.50f, 1.0f}, {0.20f, 0.24f, 0.40f, 1.0f}},
+        {"cvLightColour",            {1.00f, 0.70f, 0.50f, 1.0f}, {0.20f, 0.24f, 0.40f, 1.0f}},
+        {"cvSpecularColour",         {1.00f, 0.75f, 0.60f, 1.0f}, {0.35f, 0.40f, 0.60f, 1.0f}},
         {"cfBrightness",             {0.85f, 1.00f, 1.00f, 1.0f}, {0.55f, 1.00f, 1.00f, 1.0f}},
     };
 
@@ -193,12 +199,14 @@ namespace Atmosphere
             const std::string name = desc.Name;
             for (size_t i = 0; i < g_names.size(); ++i)
                 if (g_names[i] == name) slot = static_cast<int>(i);
-            if (g_log && values && g_logged.insert(name).second) {
+            const auto effectName = g_effectNames.find(effect);
+            const std::string where = effectName != g_effectNames.end() ? effectName->second : std::string("an effect");
+            if (g_log && values && g_logged.insert(where + "|" + name).second) {
                 char text[160] = {};
                 int used = 0;
                 for (UINT i = 0; i < count && i < 8 && used < static_cast<int>(sizeof(text)) - 16; ++i)
                     used += snprintf(text + used, sizeof(text) - used, i ? ",%.3f" : "%.3f", values[i]);
-                Log::Event(Log::Tag::Client, "Atmosphere: %s = %s (%s, %u value(s))%s\n", name.c_str(), text, how, count,
+                Log::Event(Log::Tag::Client, "Atmosphere: %s in %s = %s (%s, %u value(s))%s\n", name.c_str(), where.c_str(), text, how, count,
                            slot >= 0 ? " [tinted]" : "");
             }
         }
@@ -286,6 +294,7 @@ namespace Atmosphere
         if (left == 0) {
             Guard guard;
             g_slots.erase(effect);
+            g_effectNames.erase(effect);
         }
         return left;
     }
@@ -317,24 +326,46 @@ namespace Atmosphere
         if (ok) Log::Debug("[OpenProStreet] Atmosphere: hooked the game's effects in %s\n", D3DHooks::ModuleOf(vtable[EFFECT_SET_VECTOR]));
     }
 
+    // Which effect is which, for the log. FromResourceA may make its effect through D3DXCreateEffectEx,
+    // so the outer call's name is set last and wins.
+    static void NameEffect(void* effect, const std::string& name)
+    {
+        if (!effect) return;
+        Guard guard;
+        g_effectNames[effect] = name;
+    }
+
     static HRESULT WINAPI FromResourceHook(void* a, void* b, void* c, void* d, void* e, DWORD flags, void* pool, void** effect, void** errors)
     {
         const HRESULT result = g_realFromResource(a, b, c, d, e, flags, pool, effect, errors);
-        if (SUCCEEDED(result) && effect) HookEffect(*effect);
+        if (SUCCEEDED(result) && effect && *effect) {
+            HookEffect(*effect);
+            char name[64] = {};
+            const uintptr_t resource = reinterpret_cast<uintptr_t>(c);
+            if (resource >> 16) snprintf(name, sizeof(name), "%s", static_cast<const char*>(c));
+            else snprintf(name, sizeof(name), "#%u", static_cast<unsigned>(resource));
+            NameEffect(*effect, name);
+        }
         return result;
     }
 
     static HRESULT WINAPI CreateHook(void* a, void* b, void* c, void* d, void* e, DWORD flags, void* pool, void** effect, void** errors)
     {
         const HRESULT result = g_realCreate(a, b, c, d, e, flags, pool, effect, errors);
-        if (SUCCEEDED(result) && effect) HookEffect(*effect);
+        if (SUCCEEDED(result) && effect && *effect) {
+            HookEffect(*effect);
+            NameEffect(*effect, "an effect from memory");
+        }
         return result;
     }
 
     static HRESULT WINAPI CreateExHook(void* a, void* b, void* c, void* d, void* e, void* skip, DWORD flags, void* pool, void** effect, void** errors)
     {
         const HRESULT result = g_realCreateEx(a, b, c, d, e, skip, flags, pool, effect, errors);
-        if (SUCCEEDED(result) && effect) HookEffect(*effect);
+        if (SUCCEEDED(result) && effect && *effect) {
+            HookEffect(*effect);
+            NameEffect(*effect, "an effect from memory");
+        }
         return result;
     }
 
