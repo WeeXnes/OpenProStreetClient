@@ -27,6 +27,7 @@ set(CLIENT_SOURCES
     src/main.cpp
     src/utils.cpp
     src/discord/discord_rpc.cpp
+    src/game/atmosphere.cpp
     src/game/auto_login.cpp
     src/game/borderless.cpp
     src/game/car.cpp

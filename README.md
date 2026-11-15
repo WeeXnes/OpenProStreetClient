@@ -138,6 +138,31 @@ Scale=100           ; percent, 50 to 200
 Test=0              ; 1 always shows a small panel bottom left, to check the overlay reaches the screen
 ```
 
+### Day and night
+
+ProStreet only has day lighting on PC. Its own time of day switch loads a pre-lit `_Sunset` copy of each track, which only other platforms have. The plugin changes the light the game hands its shaders every frame instead: the sun, ambient, fog and sky colours and the overall brightness. **F8** switches between the game's own day, a low warm dusk and a dim blue night. Shadows stay where the day's sun baked them, and there are no street lights, so night looks like a darkened day.
+
+```ini
+[Atmosphere]
+Enabled=1
+Start=Day   ; Day, Dusk or Night
+Key=F8      ; F1 to F12
+Log=0       ; 1 lists every lighting value the game sets, once each, in the detailed log
+```
+
+Each look can be tuned, one line per shader parameter. Three or four numbers multiply its x, y, z (and w), one number multiplies them all, and an empty value turns a default off:
+
+```ini
+[Atmosphere.Night]
+cvWorldSunColour=0.16,0.2,0.36
+cvWorldAmbientColour=0.3,0.34,0.5
+cvFogColour=0.12,0.14,0.24
+FFSKYCOLOR=0.15,0.18,0.3
+cfBrightness=0.55
+```
+
+The defaults also tint `cvInstanceWorldSunColour`, `cvAmbientColour`, `FogColor` and `cfBloomScale`. `[Atmosphere.Dusk]` works the same way. With `Log=1`, the detailed log names the parameters and the values the game sets, and marks the ones a look changes.
+
 ### Display test
 
 A test for working on an overlay, not for playing. Add this to `scripts/OpenProStreetClient.ini`:
