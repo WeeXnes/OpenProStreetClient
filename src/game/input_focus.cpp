@@ -1,6 +1,7 @@
 #include "game/input_focus.h"
 
 #include <cstring>
+#include <atomic>
 #include <mutex>
 #include <set>
 
@@ -52,9 +53,13 @@ namespace InputFocus
         VirtualProtect(slot, sizeof(void*), oldProtect, &oldProtect);
     }
 
-    // True while one of this process's windows is in front.
+    // While an overlay window of ours takes the keyboard and mouse, the game doesn't get them.
+    static std::atomic<bool> g_captured{false};
+
+    // True while one of this process's windows is in front, and no overlay window has the input.
     static bool HasFocus()
     {
+        if (g_captured.load()) return false;
         HWND front = GetForegroundWindow();
         DWORD process = 0;
         if (front) GetWindowThreadProcessId(front, &process);
@@ -134,6 +139,16 @@ namespace InputFocus
             PatchPointer(&vtable[VTABLE_CREATE_DEVICE], reinterpret_cast<void*>(CreateDeviceHook));
         }
         return result;
+    }
+
+    void SetCaptured(bool captured)
+    {
+        g_captured.store(captured);
+        // NFS-XtendedInput reads the keyboard itself (GetAsyncKeyState), and exports a switch for it.
+        typedef bool (*SetPollingStateFn)(bool);
+        HMODULE xtended = GetModuleHandleA("NFS_XtendedInput.asi");
+        SetPollingStateFn setPolling = xtended ? reinterpret_cast<SetPollingStateFn>(GetProcAddress(xtended, "SetPollingState")) : nullptr;
+        if (setPolling) setPolling(!captured);
     }
 
     void Init(uintptr_t baseModule)

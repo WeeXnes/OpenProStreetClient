@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <d3d9.h>
 
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -12,6 +13,7 @@
 #include "backends/imgui_impl_dx9.h"
 
 #include "game/d3d_hooks.h"
+#include "game/event_vote.h"
 #include "game/vault_fixes.h"
 #include "log.h"
 #include "net/server_link.h"
@@ -424,11 +426,177 @@ namespace Overlay
         }
     }
 
+    static void DrawCardTitle(const char* title, const ImVec4& dot, float s);
+    static void DrawKeyHint(const char* key, const char* action, float s);
+
+    // The event vote window, in the middle: the race day's events, the next one marked. It takes the
+    // keyboard and mouse while it's open.
+    static void DrawVoteWindow(const EventVote::View& vote, float s)
+    {
+        const ImVec2 display = ImGui::GetIO().DisplaySize;
+        ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(420.0f * s, 0.0f), ImVec2(620.0f * s, display.y));
+        const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+                                       ImGuiWindowFlags_NoNav;
+        if (!ImGui::Begin("##vote", nullptr, flags)) { ImGui::End(); return; }
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        DrawCardTitle("Call a vote", Text2, s);
+        ImGui::PushFont(g_fontSmall);
+        ImGui::TextColored(Text2, "Pick the event to race next. More than half the room has to agree.");
+        ImGui::Dummy(ImVec2(0.0f, 8.0f * s));
+
+        // The events: rounded rows, the picked one lit, the next one tagged.
+        const float rowHeight = 30.0f * s, width = ImGui::GetContentRegionAvail().x;
+        for (int i = 0; i < static_cast<int>(vote.events.size()); ++i)
+        {
+            const ImVec2 at = ImGui::GetCursorScreenPos();
+            ImGui::PushID(i);
+            if (ImGui::InvisibleButton("##event", ImVec2(width, rowHeight))) EventVote::Select(i);
+            const bool hovered = ImGui::IsItemHovered();
+            if (hovered && ImGui::IsMouseDoubleClicked(0)) EventVote::CallSelected();
+            ImGui::PopID();
+            const bool picked = i == vote.selected;
+            if (picked || hovered)
+                draw->AddRectFilled(at, ImVec2(at.x + width, at.y + rowHeight), ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, picked ? 0.08f : 0.04f)),
+                                    8.0f * s);
+            if (picked) draw->AddRect(at, ImVec2(at.x + width, at.y + rowHeight), ImGui::GetColorU32(Line), 8.0f * s);
+            const float textY = at.y + (rowHeight - ImGui::GetTextLineHeight()) * 0.5f;
+            const std::string number = std::to_string(i + 1);
+            draw->AddText(ImVec2(at.x + 12.0f * s, textY), ImGui::GetColorU32(Text3), number.c_str());
+            draw->AddText(ImVec2(at.x + 34.0f * s, textY), ImGui::GetColorU32(picked ? Text1 : Text2), vote.events[i].c_str());
+            if (i == vote.current)
+            {
+                const char* tag = "NEXT";
+                const ImVec2 size = ImGui::CalcTextSize(tag);
+                draw->AddText(ImVec2(at.x + width - size.x - 12.0f * s, textY), ImGui::GetColorU32(Text3), tag);
+            }
+        }
+        ImGui::Dummy(ImVec2(0.0f, 10.0f * s));
+
+        // Call vote (white, like the website's primary button) and Close (quiet).
+        const bool canCall = vote.selected != vote.current && !vote.voteActive;
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f * s);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f * s, 7.0f * s));
+        ImGui::PushStyleColor(ImGuiCol_Button, Text1);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, Text2);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.039f, 0.039f, 0.039f, 1.0f));
+        if (!canCall) ImGui::BeginDisabled();
+        if (ImGui::Button("Call vote")) EventVote::CallSelected();
+        if (!canCall) ImGui::EndDisabled();
+        ImGui::PopStyleColor(4);
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 1.0f, 1.0f, 0.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 1.0f, 1.0f, 0.06f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.0f, 1.0f, 1.0f, 0.10f));
+        ImGui::PushStyleColor(ImGuiCol_Text, Text2);
+        ImGui::PushStyleColor(ImGuiCol_Border, Line);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+        if (ImGui::Button("Close")) EventVote::Close();
+        ImGui::PopStyleVar(3);
+        ImGui::PopStyleColor(5);
+
+        // The keys, as small chips.
+        ImGui::Dummy(ImVec2(0.0f, 6.0f * s));
+        DrawKeyHint("Up/Down", "pick", s);
+        ImGui::SameLine(0.0f, 14.0f * s);
+        DrawKeyHint("Enter", "call", s);
+        ImGui::SameLine(0.0f, 14.0f * s);
+        DrawKeyHint((vote.yesKey + "/Esc").c_str(), "close", s);
+        ImGui::PopFont();
+        ImGui::End();
+    }
+
+    // A running vote, top centre under the notices' place: what it's for, the keys, and the count.
+    static void DrawVotePopup(const EventVote::View& vote, float s)
+    {
+        const ImVec2 display = ImGui::GetIO().DisplaySize;
+        ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.22f), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(360.0f * s, 0.0f), ImVec2(560.0f * s, display.y));
+        if (!ImGui::Begin("##votepopup", nullptr, PanelFlags)) { ImGui::End(); return; }
+        DrawCardTitle("Vote for the next event", Warning, s);
+        ImGui::PushFont(g_fontSmall);
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 14.0f * s);
+        ImGui::TextColored(Text1, "%s", vote.eventName.c_str());
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 14.0f * s);
+        ImGui::TextColored(Text3, "Called by %s", vote.caller.c_str());
+        ImGui::Dummy(ImVec2(0.0f, 6.0f * s));
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 14.0f * s);
+        if (vote.myVote < 0)
+        {
+            DrawKeyHint(vote.yesKey.c_str(), "yes", s);
+            ImGui::SameLine(0.0f, 16.0f * s);
+            DrawKeyHint(vote.noKey.c_str(), "no", s);
+        }
+        else
+        {
+            ImGui::TextColored(vote.myVote ? Success : Text2, "You voted %s", vote.myVote ? "yes" : "no");
+        }
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 14.0f * s);
+        ImGui::TextColored(Text3, "%d yes  %d no  of %d   %d s", vote.yes, vote.no, vote.total, static_cast<int>(vote.secondsLeft + 0.999));
+
+        // The time left, as a thin bar.
+        ImGui::Dummy(ImVec2(0.0f, 4.0f * s));
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        const float width = ImGui::GetContentRegionAvail().x, height = 3.0f * s;
+        float share = static_cast<float>(vote.secondsLeft / 20.0);
+        if (share < 0.0f) share = 0.0f;
+        if (share > 1.0f) share = 1.0f;
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->AddRectFilled(at, ImVec2(at.x + width, at.y + height), ImGui::GetColorU32(Line), height);
+        draw->AddRectFilled(at, ImVec2(at.x + width * share, at.y + height), ImGui::GetColorU32(Warning), height);
+        ImGui::Dummy(ImVec2(width, height));
+        ImGui::PopFont();
+        ImGui::End();
+    }
+
+    // A card's title with the 6px status dot in front, as the notices have.
+    static void DrawCardTitle(const char* title, const ImVec4& dot, float s)
+    {
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        ImGui::PushFont(g_fontBody);
+        const float lineHeight = ImGui::GetTextLineHeight();
+        ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(at.x + 3.0f * s, at.y + lineHeight * 0.5f), 3.5f * s, ImGui::GetColorU32(dot));
+        ImGui::SetCursorScreenPos(ImVec2(at.x + 14.0f * s, at.y));
+        ImGui::TextColored(Text1, "%s", title);
+        ImGui::PopFont();
+    }
+
+    // A key as a small outlined chip, then what it does: [F1] yes.
+    static void DrawKeyHint(const char* key, const char* action, float s)
+    {
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        const ImVec2 size = ImGui::CalcTextSize(key);
+        const ImVec2 pad(6.0f * s, 2.0f * s);
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->AddRectFilled(at, ImVec2(at.x + size.x + pad.x * 2.0f, at.y + size.y + pad.y * 2.0f), ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 0.06f)),
+                            5.0f * s);
+        draw->AddRect(at, ImVec2(at.x + size.x + pad.x * 2.0f, at.y + size.y + pad.y * 2.0f), ImGui::GetColorU32(Line), 5.0f * s);
+        draw->AddText(ImVec2(at.x + pad.x, at.y + pad.y), ImGui::GetColorU32(Text1), key);
+        ImGui::Dummy(ImVec2(size.x + pad.x * 2.0f, size.y + pad.y * 2.0f));
+        ImGui::SameLine(0.0f, 6.0f * s);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + pad.y);
+        ImGui::TextColored(Text2, "%s", action);
+    }
+
+    // True while one of this process's windows is in front.
+    static bool GameInFront()
+    {
+        DWORD process = 0;
+        HWND front = GetForegroundWindow();
+        if (front) GetWindowThreadProcessId(front, &process);
+        return process == GetCurrentProcessId();
+    }
+
     static void BeforePresent(IDirect3DDevice9* device, IDirect3DSwapChain9*)
     {
         if (!g_ready || g_deviceLost) return;
         UseDevice(device);
         if (!g_ready) return;
+
+        const bool front = GameInFront();
+        EventVote::Poll(front);
+        const EventVote::View vote = EventVote::Snapshot();
 
         // Copy what to show, so the other threads aren't held up while drawing.
         bool showStanding, showLobby;
@@ -453,7 +621,7 @@ namespace Overlay
                 notices.push_back(g_noticeQueue[i]);
             }
         }
-        if (!showStanding && !showLobby && notices.empty() && !g_test) return;
+        if (!showStanding && !showLobby && notices.empty() && !g_test && !vote.windowOpen && !vote.voteActive) return;
         if (!g_drawnOnce)
         {
             g_drawnOnce = true;
@@ -475,12 +643,31 @@ namespace Overlay
         if (io.DeltaTime <= 0.0f) io.DeltaTime = 1.0f / 60.0f;
         g_last = tick;
 
+        // The vote window takes the mouse, read straight from Windows (the overlay has no window
+        // procedure of its own), scaled from the window's client area to the back buffer.
+        io.MouseDrawCursor = vote.windowOpen;
+        io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
+        io.MouseDown[0] = false;
+        if (vote.windowOpen)
+        {
+            D3DDEVICE_CREATION_PARAMETERS params = {};
+            HWND window = SUCCEEDED(device->GetCreationParameters(&params)) && params.hFocusWindow ? params.hFocusWindow : GetForegroundWindow();
+            POINT cursor;
+            RECT client;
+            if (window && GetCursorPos(&cursor) && ScreenToClient(window, &cursor) && GetClientRect(window, &client) && client.right > 0 &&
+                client.bottom > 0)
+                io.MousePos = ImVec2(cursor.x * io.DisplaySize.x / client.right, cursor.y * io.DisplaySize.y / client.bottom);
+            io.MouseDown[0] = front && (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        }
+
         const float s = g_fontScaleBase * io.FontGlobalScale;
         ImGui_ImplDX9_NewFrame();
         ImGui::NewFrame();
         if (showStanding) DrawStanding(trackName, mode, boards, s);
         if (showLobby) DrawLobby(lobby, s);
         if (g_notices) DrawNotices(notices, now, s);
+        if (vote.voteActive) DrawVotePopup(vote, s);
+        if (vote.windowOpen) DrawVoteWindow(vote, s);
         if (g_test)
         {
             // A fixed panel bottom left, to check the overlay reaches the screen at all.

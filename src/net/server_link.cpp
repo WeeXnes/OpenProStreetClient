@@ -17,6 +17,7 @@
 #include "game/car_lock.h"
 #include "game/overlay.h"
 #include "game/quick_match.h"
+#include "game/event_vote.h"
 #include "log.h"
 
 extern const std::string version;
@@ -134,6 +135,21 @@ namespace ServerLink
                 cars.push_back(std::make_pair(packed.substr(0, bar), packed.substr(bar + 1)));
             }
             Overlay::SetLobbyCars(cars);
+            if (count == 0) EventVote::Reset(); // left the room
+        }
+        // The room's race day events and the next one, for the event vote window.
+        if (xml.find("<method> raceDayEvents") != std::string::npos) {
+            std::vector<std::string> names;
+            const int count = atoi(ParamValue(xml, "events").c_str());
+            for (int i = 0; i < count && i < 8; ++i) names.push_back(ParamValue(xml, "e" + std::to_string(i)));
+            EventVote::SetEvents(names, atoi(ParamValue(xml, "current").c_str()));
+        }
+        // An event vote in the room: started, update, ended, or refused (to the caller).
+        if (xml.find("<method> eventVote") != std::string::npos) {
+            EventVote::OnVote(ParamValue(xml, "type"), ParamValue(xml, "caller"), atoi(ParamValue(xml, "index").c_str()),
+                              ParamValue(xml, "event"), atoi(ParamValue(xml, "yes").c_str()), atoi(ParamValue(xml, "no").c_str()),
+                              atoi(ParamValue(xml, "total").c_str()), atoi(ParamValue(xml, "seconds").c_str()),
+                              ParamValue(xml, "passed") == "1", ParamValue(xml, "reason"));
         }
         // Sent on joining and leaving a room: the race day's time of day, or nothing for the player's own.
         if (xml.find("<method> atmosphere") != std::string::npos) {
@@ -330,6 +346,7 @@ namespace ServerLink
         callbacks.log = [](const char* text) { Log::Event(Log::Tag::Server, "%s\n", text); };
 
         CarLock::SetAllowedCars(""); // a new connection starts outside any room
+        EventVote::Reset();
         g_client.reset(new SecureClient(g_identity, ephemeral, callbacks));
         g_client->Begin(GetTickCount());
         std::vector<std::pair<std::string, std::string> > params;
@@ -411,5 +428,19 @@ namespace ServerLink
         if (g_client && g_client->GetState() == SecureClient::State::Established) {
             SendCommand("results", "standing", params);
         }
+    }
+
+    void CallVote(int eventIndex) {
+        std::vector<std::pair<std::string, std::string> > params;
+        params.push_back(std::make_pair(std::string("index"), std::to_string(eventIndex)));
+        Lock lock;
+        if (g_client && g_client->GetState() == SecureClient::State::Established) SendCommand("client", "callVote", params);
+    }
+
+    void CastVote(bool yes) {
+        std::vector<std::pair<std::string, std::string> > params;
+        params.push_back(std::make_pair(std::string("yes"), std::string(yes ? "1" : "0")));
+        Lock lock;
+        if (g_client && g_client->GetState() == SecureClient::State::Established) SendCommand("client", "castVote", params);
     }
 }

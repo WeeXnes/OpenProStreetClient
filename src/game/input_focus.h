@@ -10,6 +10,10 @@
 namespace InputFocus
 {
     void Init(uintptr_t baseModule);
+
+    // While an overlay window takes the keyboard and mouse (the event vote window), the game gets
+    // none of it. Gamepads are left alone.
+    void SetCaptured(bool captured);
 }
 
 #endif // OPENPROSTREET_INPUT_FOCUS_H

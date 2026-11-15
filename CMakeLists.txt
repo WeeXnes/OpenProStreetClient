@@ -36,6 +36,7 @@ set(CLIENT_SOURCES
     src/game/display_test.cpp
     src/game/hooks.cpp
     src/game/input_focus.cpp
+    src/game/event_vote.cpp
     src/game/lan_menu.cpp
     src/game/lanfix.cpp
     src/game/map.cpp
