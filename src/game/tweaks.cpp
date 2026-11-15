@@ -28,6 +28,18 @@ namespace Tweaks
     static TextReplacement* g_textReplacementList = g_textReplacements;
     static uintptr_t g_loc_595859 = 0;
 
+    // 60 Hz OLMSG_CarState transmit cadence (replaces the game's 15 Hz = 0.06666667 s cap in 0x7C1340).
+    static const float  g_carStateIntervalFloat  = 1.0f / 60.0f;
+    static const double g_carStateIntervalDouble = 1.0 / 60.0;
+
+    // Hermite interpolation window in ExtrapolatedCar (0x74F340 / 0x74F590): 25 ms .. 100 ms for 60 Hz
+    // (replaces the 15 Hz window of 75 ms .. 200 ms, and 1 / 0.025 = 40.0f fallback rate).
+    static const double g_carBlendMaxDouble    = 0.10;
+    static const float  g_carBlendMaxFloat     = 0.10f;
+    static const double g_carBlendMinDouble    = 0.025;
+    static const float  g_carBlendMinFloat     = 0.025f;
+    static const float  g_carBlendInvMinFloat  = 1.0f / 0.025f;
+
     static void PatchMemory(uintptr_t address, const void* data, size_t size)
     {
         DWORD oldProtect;
@@ -190,6 +202,80 @@ namespace Tweaks
         Log::Debug("[OpenProStreet] The main menu no longer tries to log in to EA.\n");
     }
 
+    static void PatchPointerOperand(uintptr_t instrAddr, size_t ptrOffset, const void* targetPtr)
+    {
+        uintptr_t addr = reinterpret_cast<uintptr_t>(targetPtr);
+        PatchMemory(instrAddr + ptrOffset, &addr, sizeof(addr));
+    }
+
+    // Raises OLMSG_CarState send rate in 0x7C1340 from 15 Hz (66.7 ms) to 60 Hz (16.7 ms),
+    // tightens the ExtrapolatedCar Hermite blend window (0x74F340 / 0x74F590) from 75..200 ms
+    // to 25..100 ms, and requests 1 ms Windows timer resolution for timeGetTime().
+    // Instruction pointer operands are redirected to our own constants so shared .rdata values
+    // (0x9713D8, 0x98D674, 0x9FAA18) remain untouched for the rest of the engine.
+    static void ImproveMultiplayerCarSync(uintptr_t baseModule)
+    {
+        HMODULE winmm = GetModuleHandleA("winmm.dll");
+        if (!winmm) winmm = LoadLibraryA("winmm.dll");
+        if (winmm)
+        {
+            typedef UINT (WINAPI *TimeBeginPeriodFn)(UINT);
+            TimeBeginPeriodFn beginPeriod = reinterpret_cast<TimeBeginPeriodFn>(GetProcAddress(winmm, "timeBeginPeriod"));
+            if (beginPeriod) beginPeriod(1);
+        }
+
+        // 0x7C13C3: 0F 2F 05 [74 D6 98 00]  comiss xmm0, dword ptr [0x98D674]
+        // 0x7C13E7: DC 05    [D8 13 97 00]  fadd   qword ptr [0x9713D8]
+        const uintptr_t sendCmp = baseModule + 0x3C13C3;
+        const uintptr_t sendAdd = baseModule + 0x3C13E7;
+        const uint8_t expectedSendCmp[] = { 0x0F, 0x2F, 0x05 };
+        const uint8_t expectedSendAdd[] = { 0xDC, 0x05 };
+        if (memcmp((const void*)sendCmp, expectedSendCmp, sizeof(expectedSendCmp)) != 0 ||
+            memcmp((const void*)sendAdd, expectedSendAdd, sizeof(expectedSendAdd)) != 0)
+        {
+            Log::Debug("[OpenProStreet] CarState send timer not recognised, leaving it alone.\n");
+            return;
+        }
+        PatchPointerOperand(sendCmp, 3, &g_carStateIntervalFloat);
+        PatchPointerOperand(sendAdd, 2, &g_carStateIntervalDouble);
+
+        // 0x74F37F: DD 05       [18 AA 9F 00]  fld   qword ptr [0x9FAA18] (0.2 max blend compare)
+        // 0x74F393: F3 0F 10 05 [78 67 99 00]  movss xmm0, dword ptr [0x996778] (0.2f max blend clamp)
+        // 0x74F3A5: DD 05       [50 6F 99 00]  fld   qword ptr [0x996F50] (0.075 min blend compare)
+        // 0x74F3B1: F3 0F 10 05 [74 67 99 00]  movss xmm0, dword ptr [0x996774] (0.075f min blend clamp)
+        // 0x7726B3: D9 05       [78 67 99 00]  fld   dword ptr [0x996778] (0.2f fallback blend)
+        // 0x74F59D: F3 0F 10 05 [58 6F 99 00]  movss xmm0, dword ptr [0x996F58] (1/0.075f fallback inv blend)
+        // 0x7713E1: F3 0F 10 05 [58 6F 99 00]  movss xmm0, dword ptr [0x996F58] (1/0.075f init inv blend)
+        const uintptr_t blendMaxCmp   = baseModule + 0x34F37F;
+        const uintptr_t blendMaxClamp = baseModule + 0x34F393;
+        const uintptr_t blendMinCmp   = baseModule + 0x34F3A5;
+        const uintptr_t blendMinClamp = baseModule + 0x34F3B1;
+        const uintptr_t blendFallback = baseModule + 0x3726B3;
+        const uintptr_t invBlendUse   = baseModule + 0x34F59D;
+        const uintptr_t invBlendInit  = baseModule + 0x3713E1;
+        const uint8_t expectedFldQword[] = { 0xDD, 0x05 };
+        const uint8_t expectedFldDword[] = { 0xD9, 0x05 };
+        const uint8_t expectedMovss[]    = { 0xF3, 0x0F, 0x10, 0x05 };
+        if (memcmp((const void*)blendMaxCmp,   expectedFldQword, sizeof(expectedFldQword)) == 0 &&
+            memcmp((const void*)blendMaxClamp, expectedMovss,    sizeof(expectedMovss))    == 0 &&
+            memcmp((const void*)blendMinCmp,   expectedFldQword, sizeof(expectedFldQword)) == 0 &&
+            memcmp((const void*)blendMinClamp, expectedMovss,    sizeof(expectedMovss))    == 0 &&
+            memcmp((const void*)blendFallback, expectedFldDword, sizeof(expectedFldDword)) == 0 &&
+            memcmp((const void*)invBlendUse,   expectedMovss,    sizeof(expectedMovss))    == 0 &&
+            memcmp((const void*)invBlendInit,  expectedMovss,    sizeof(expectedMovss))    == 0)
+        {
+            PatchPointerOperand(blendMaxCmp,   2, &g_carBlendMaxDouble);
+            PatchPointerOperand(blendMaxClamp, 4, &g_carBlendMaxFloat);
+            PatchPointerOperand(blendMinCmp,   2, &g_carBlendMinDouble);
+            PatchPointerOperand(blendMinClamp, 4, &g_carBlendMinFloat);
+            PatchPointerOperand(blendFallback, 2, &g_carBlendMaxFloat);
+            PatchPointerOperand(invBlendUse,   4, &g_carBlendInvMinFloat);
+            PatchPointerOperand(invBlendInit,  4, &g_carBlendInvMinFloat);
+        }
+
+        Log::Debug("[OpenProStreet] 60 Hz CarState sync & smoother active.\n");
+    }
+
     void Init(uintptr_t baseModule)
     {
         if (!baseModule) return;
@@ -199,5 +285,6 @@ namespace Tweaks
         KeepRunningWhileMinimized(baseModule);
         StayOnlineWithoutFocus(baseModule);
         NoEaAutoLogin(baseModule);
+        ImproveMultiplayerCarSync(baseModule);
     }
 }

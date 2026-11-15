@@ -35,7 +35,29 @@ namespace Overlay
     void PushNotice(const std::string& kind, const std::string& title, const std::vector<std::string>& lines);
     // Who is in the room and the car each picked (empty while picking), shown while not racing. An
     // empty list hides the card.
-    void SetLobbyCars(const std::vector<std::pair<std::string, std::string> >& cars);
+    struct LobbyPlayer
+    {
+        std::string name;
+        std::string car;
+        std::string status; // ready, menus, picking, blocked, racing
+    };
+
+    struct LobbyTimerState
+    {
+        int         seconds = -1;
+        bool        paused = false;
+        std::string reason; // vote, car, wait, ready
+        std::string who;
+        int         ready = 0;
+        int         total = 0;
+        int         allReadyIn = 0;
+    };
+
+    void SetLobbyState(const std::string& room, const std::string& atmosphere, int eventIndex, int eventCount,
+                       const std::vector<LobbyPlayer>& players);
+    void SetLobbyTimer(const LobbyTimerState& timer);
+    bool GetPausedTimerSeconds(int* outSeconds);
+    void ResetRoomState();
 
     // The encrypted connection to the server is up, which happens on logging in from the main menu.
     // Shows a short notice, so it's clear the overlay works before the first race.

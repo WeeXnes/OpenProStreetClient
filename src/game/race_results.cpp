@@ -1,4 +1,5 @@
 #include "game/race_results.h"
+#include "game/overlay.h"
 #include "game/hooks.h"
 #include "net/server_link.h"
 #include "game/map.h"
@@ -12,7 +13,9 @@
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
+#include <cmath>
 #include <vector>
+#include <windows.h>
 
 namespace RaceResults
 {
@@ -23,6 +26,13 @@ namespace RaceResults
     static void* g_origSetTimeBonus = nullptr;
     static void* g_origSetPoints = nullptr;
     static void* g_origLapChanged = nullptr;
+    static void* g_origGetRemainingSeconds = nullptr;
+
+    static CRITICAL_SECTION g_paceLock;
+    static bool g_paceLockReady = false;
+    static int g_lastSplitLap = 0;
+    static float g_lastSplitTime = 0.0f;
+    static DWORD g_lastSplitTick = 0;
 
     static float g_lastRewardsTime = 0.0f;
     static float g_lastRewardsPoints = 0.0f;
@@ -47,7 +57,15 @@ namespace RaceResults
     static const uintptr_t RACER_TOP_SPEED_MS = 0x78;
     static const uintptr_t RACER_BEST_LAP = 0x80;
     static const uintptr_t RACER_LAST_LAP = 0x2D4;
+    static const uintptr_t RACER_RACE_TIMER_START = 0x3E8;
     static const uintptr_t RACER_RACE_TIMER_ELAPSED = 0x3EC;
+    static const uintptr_t RACER_RACE_TIMER_RUNNING = 0x3F0;
+    static const uintptr_t RACER_LAP_TIMER_START = 0x3F4;
+    static const uintptr_t RACER_LAP_TIMER_ELAPSED = 0x3F8;
+    static const uintptr_t RACER_LAP_TIMER_RUNNING = 0x3FC;
+    static const uintptr_t FLOW_STATE_OFFSET = 0x6BB510;
+    static const uintptr_t WORLD_TIME_OFFSET = 0x7FB3F8;
+    static const uintptr_t HUB_TIMER_PTR_OFFSET = 0x7307E4;
 
     static uintptr_t FindLocalRacer(uintptr_t baseModule, uintptr_t gRaceStatus)
     {
@@ -466,12 +484,26 @@ namespace RaceResults
             g_localLapTimes.clear();
             g_lastRewardsTime = 0.0f;
             g_lastRewardsPoints = 0.0f;
+            if (g_paceLockReady) {
+                EnterCriticalSection(&g_paceLock);
+                g_lastSplitLap = 0;
+                g_lastSplitTime = 0.0f;
+                g_lastSplitTick = 0;
+                LeaveCriticalSection(&g_paceLock);
+            }
             return;
         }
 
         float lastLap = *(float*)((uintptr_t)thisPtr + RACER_LAST_LAP);
         if ((size_t)lapsCompleted > g_localLapTimes.size() && lastLap > 0.1f && lastLap < 3600.0f) {
             g_localLapTimes.push_back(lastLap);
+            if (g_paceLockReady) {
+                EnterCriticalSection(&g_paceLock);
+                g_lastSplitLap = lapsCompleted;
+                g_lastSplitTime = lastLap;
+                g_lastSplitTick = GetTickCount();
+                LeaveCriticalSection(&g_paceLock);
+            }
         }
     }
 
@@ -501,10 +533,88 @@ namespace RaceResults
         reinterpret_cast<void(__attribute__((thiscall))*)(void*)>(g_origOnlineHandleScreenConstructed)(thisPtr);
     }
 
+    static float ReadTimer(uintptr_t racer, uintptr_t startOff, uintptr_t accumOff, uintptr_t runOff, float worldTime, bool* isRunning)
+    {
+        uint8_t running = *(uint8_t*)(racer + runOff);
+        float start = *(float*)(racer + startOff);
+        float accum = *(float*)(racer + accumOff);
+        float value = running ? (worldTime - start + accum) : accum;
+        if (!std::isfinite(value) || value < 0.0f || value > 86400.0f) value = 0.0f;
+        if (running && isRunning) *isRunning = true;
+        return value;
+    }
+
+    LivePace GetLivePace()
+    {
+        LivePace out;
+        if (!g_baseModule) return out;
+        uintptr_t flowAddr = g_baseModule + FLOW_STATE_OFFSET;
+        if (IsBadReadPtr((void*)flowAddr, sizeof(int32_t)) != 0 || *(int32_t*)flowAddr != 6) {
+            return out;
+        }
+        uintptr_t gRaceStatusBase = g_baseModule + 0x6B9D7C;
+        if (IsBadReadPtr((void*)gRaceStatusBase, sizeof(uintptr_t)) != 0) return out;
+        uintptr_t racer = FindLocalRacer(g_baseModule, *(uintptr_t*)gRaceStatusBase);
+        if (!racer || IsBadReadPtr((void*)racer, RACER_LAP_TIMER_RUNNING + 1) != 0) return out;
+
+        uintptr_t worldTimeAddr = g_baseModule + WORLD_TIME_OFFSET;
+        float worldTime = !IsBadReadPtr((void*)worldTimeAddr, sizeof(float)) ? *(float*)worldTimeAddr : 0.0f;
+        if (!std::isfinite(worldTime)) worldTime = 0.0f;
+
+        out.active = true;
+        out.raceElapsed = ReadTimer(racer, RACER_RACE_TIMER_START, RACER_RACE_TIMER_ELAPSED, RACER_RACE_TIMER_RUNNING, worldTime, &out.running);
+        out.lapElapsed = ReadTimer(racer, RACER_LAP_TIMER_START, RACER_LAP_TIMER_ELAPSED, RACER_LAP_TIMER_RUNNING, worldTime, &out.running);
+        out.lapsCompleted = *(int32_t*)(racer + RACER_LAPS_COMPLETED);
+        float score = *(float*)(racer + RACER_SCORE);
+        out.score = (std::isfinite(score) && score >= 0.0f) ? score : 0.0f;
+        float speedMs = *(float*)(racer + RACER_TOP_SPEED_MS);
+        out.topSpeedKmh = (std::isfinite(speedMs) && speedMs > 0.0f && speedMs < 500.0f) ? speedMs * 3.6f : 0.0f;
+        float bestLap = *(float*)(racer + RACER_BEST_LAP);
+        out.bestLap = (std::isfinite(bestLap) && bestLap > 0.0f && bestLap < 86400.0f) ? bestLap : 0.0f;
+        float lastLap = *(float*)(racer + RACER_LAST_LAP);
+        out.lastLap = (std::isfinite(lastLap) && lastLap > 0.0f && lastLap < 86400.0f) ? lastLap : 0.0f;
+
+        if (g_paceLockReady) {
+            EnterCriticalSection(&g_paceLock);
+            if (g_lastSplitLap > 0 && g_lastSplitTime > 0.0f) {
+                DWORD age = GetTickCount() - g_lastSplitTick;
+                if (age < 6000) {
+                    out.lastSplitLap = g_lastSplitLap;
+                    out.lastSplitTime = g_lastSplitTime;
+                    out.lastSplitAgeMs = age;
+                }
+            }
+            LeaveCriticalSection(&g_paceLock);
+        }
+        return out;
+    }
+
+    static float __attribute__((thiscall)) OnlineHubTimer_GetRemainingSeconds_Hook(void* thisPtr)
+    {
+        int pausedSeconds = -1;
+        if (thisPtr && g_baseModule && Overlay::GetPausedTimerSeconds(&pausedSeconds) && pausedSeconds >= 0) {
+            uintptr_t timerGlobalPtr = g_baseModule + HUB_TIMER_PTR_OFFSET;
+            if (!IsBadReadPtr((void*)timerGlobalPtr, sizeof(uintptr_t)) &&
+                *(uintptr_t*)timerGlobalPtr == (uintptr_t)thisPtr &&
+                !IsBadReadPtr(thisPtr, 0x10)) {
+                uint8_t active = *(uint8_t*)((uintptr_t)thisPtr + 0x08);
+                uint8_t isInactivity = *(uint8_t*)((uintptr_t)thisPtr + 0x09);
+                if (active != 0 && isInactivity == 0) {
+                    return static_cast<float>(pausedSeconds) + 0.1f;
+                }
+            }
+        }
+        return reinterpret_cast<float(__attribute__((thiscall))*)(void*)>(g_origGetRemainingSeconds)(thisPtr);
+    }
+
     void Init(uintptr_t baseModule)
     {
         if (!baseModule) return;
         g_baseModule = baseModule;
+        if (!g_paceLockReady) {
+            InitializeCriticalSection(&g_paceLock);
+            g_paceLockReady = true;
+        }
 
         Log::Debug("[OpenProStreet] Initializing Post-Race State Manager Hooks...\n");
 
@@ -537,6 +647,11 @@ namespace RaceResults
 
         if (Hooks::InstallDetour((void*)loc_695DE0, (void*)LapChanged_Hook, &g_origLapChanged, 7)) {
             Log::Debug("[OpenProStreet] Lap hook installed at 0x%p\n", (void*)loc_695DE0);
+        }
+
+        uintptr_t loc_7B8B00 = baseModule + 0x3B8B00;
+        if (Hooks::InstallDetour((void*)loc_7B8B00, (void*)OnlineHubTimer_GetRemainingSeconds_Hook, &g_origGetRemainingSeconds, 8)) {
+            Log::Debug("[OpenProStreet] OnlineHubTimer hook installed at 0x%p\n", (void*)loc_7B8B00);
         }
     }
 }

@@ -27,6 +27,23 @@ struct RaceResult {
 namespace RaceResults
 {
     // Initializes the Post-Race State Manager trampoline hooks
+    struct LivePace
+    {
+        bool  active = false;
+        bool  running = false;
+        int   lapsCompleted = 0;
+        float lapElapsed = 0.0f;
+        float raceElapsed = 0.0f;
+        float bestLap = 0.0f;
+        float lastLap = 0.0f;
+        float score = 0.0f;
+        float topSpeedKmh = 0.0f;
+        int   lastSplitLap = 0;
+        float lastSplitTime = 0.0f;
+        unsigned long lastSplitAgeMs = 0;
+    };
+
+    LivePace GetLivePace();
     void Init(uintptr_t baseModule);
 }
 

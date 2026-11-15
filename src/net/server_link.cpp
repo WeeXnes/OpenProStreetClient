@@ -124,18 +124,46 @@ namespace ServerLink
         if (xml.find("<method> allowedCars") != std::string::npos) {
             CarLock::SetAllowedCars(ParamValue(xml, "cars"));
         }
-        // Who is in the room and which car each picked: "name|car" a player, car empty while picking.
+        // Who is in the room, which car each picked, and their lobby state.
         if (xml.find("<method> lobbyCars") != std::string::npos) {
-            std::vector<std::pair<std::string, std::string> > cars;
+            std::vector<Overlay::LobbyPlayer> players;
             const int count = atoi(ParamValue(xml, "cars").c_str());
+            const std::string statuses = ParamValue(xml, "st");
             for (int i = 0; i < count && i < 8; ++i) {
                 const std::string packed = ParamValue(xml, "c" + std::to_string(i));
                 const size_t bar = packed.find('|');
                 if (bar == std::string::npos) continue;
-                cars.push_back(std::make_pair(packed.substr(0, bar), packed.substr(bar + 1)));
+                Overlay::LobbyPlayer p;
+                p.name = packed.substr(0, bar);
+                p.car = packed.substr(bar + 1);
+                const char code = static_cast<size_t>(i) < statuses.size() ? statuses[static_cast<size_t>(i)] : '\0';
+                if (code == 'b') p.status = "blocked";
+                else if (code == 'g') p.status = "racing";
+                else if (code == 'p') p.status = "picking";
+                else if (code == 'a') p.status = "menus";
+                else if (code == 'r') p.status = "ready";
+                else p.status = p.car.empty() ? "picking" : "ready";
+                players.push_back(p);
             }
-            Overlay::SetLobbyCars(cars);
-            if (count == 0) EventVote::Reset(); // left the room
+            const int ev = atoi(ParamValue(xml, "ev").c_str());
+            const int evs = atoi(ParamValue(xml, "evs").c_str());
+            Overlay::SetLobbyState(ParamValue(xml, "room"), ParamValue(xml, "atm"), ev, evs, players);
+            if (count == 0) {
+                EventVote::Reset();
+                Overlay::ResetRoomState();
+            }
+        }
+        if (xml.find("<method> lobbyTimer") != std::string::npos) {
+            Overlay::LobbyTimerState t;
+            const std::string sec = ParamValue(xml, "sec");
+            t.seconds = sec.empty() ? -1 : atoi(sec.c_str());
+            t.paused = atoi(ParamValue(xml, "paused").c_str()) != 0;
+            t.reason = ParamValue(xml, "why");
+            t.who = ParamValue(xml, "who");
+            t.ready = atoi(ParamValue(xml, "ready").c_str());
+            t.total = atoi(ParamValue(xml, "total").c_str());
+            t.allReadyIn = atoi(ParamValue(xml, "skip").c_str());
+            Overlay::SetLobbyTimer(t);
         }
         // The room's race day events and the next one, for the event vote window.
         if (xml.find("<method> raceDayEvents") != std::string::npos) {
@@ -246,12 +274,18 @@ namespace ServerLink
     }
 
     static int WSAAPI CloseHook(SOCKET s) {
+        bool closedOurs = false;
         {
             Lock lock;
             if (s == g_socket) {
                 g_socket = INVALID_SOCKET;
                 g_client.reset();
+                closedOurs = true;
             }
+        }
+        if (closedOurs) {
+            EventVote::Reset();
+            Overlay::ResetRoomState();
         }
         return g_realClose(s);
     }

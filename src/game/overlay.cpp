@@ -1,4 +1,5 @@
 #include "game/overlay.h"
+#include "game/race_results.h"
 
 #include <windows.h>
 #include <d3d9.h>
@@ -47,9 +48,15 @@ namespace Overlay
 
     static CRITICAL_SECTION g_lock;
     static bool g_racing = false;
-    // Who is in the room and the car each picked, from the server. Shown while not racing.
-    static std::vector<std::pair<std::string, std::string> > g_lobbyCars;
+    // Room and lobby state, from the server. Shown while not racing.
+    static std::string g_lobbyRoom;
+    static std::string g_lobbyAtmosphere;
+    static int g_lobbyEventIndex = 0;
+    static int g_lobbyEventCount = 0;
+    static std::vector<LobbyPlayer> g_lobbyPlayers;
+    static LobbyTimerState g_lobbyTimer;
     static bool g_lobbyCarsShown = true;
+    static bool g_paceBarShown = true;
     static std::string g_trackKey, g_trackName, g_raceMode;
     static std::string g_requestedTrack, g_requestedMode;
     static std::string g_standingTrack, g_standingMode;
@@ -84,6 +91,8 @@ namespace Overlay
     static const ImVec4 Gold(0.910f, 0.773f, 0.278f, 1.0f);      // #e8c547
     static const ImVec4 Silver(0.769f, 0.769f, 0.769f, 1.0f);    // #c4c4c4
     static const ImVec4 Bronze(0.788f, 0.553f, 0.369f, 1.0f);    // #c98d5e
+    static const ImVec4 Danger(0.937f, 0.267f, 0.267f, 1.0f);    // #ef4444
+    static const ImVec4 Info(0.376f, 0.647f, 0.980f, 1.0f);      // #60a5fa
 
     static double Now()
     {
@@ -286,7 +295,199 @@ namespace Overlay
     static const ImGuiWindowFlags PanelFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize |
         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBringToFrontOnFocus;
 
-    static void DrawStanding(const std::string& trackName, const std::string& mode, const std::vector<Board>& boards, float s)
+    static std::string FormatClock(int seconds)
+    {
+        if (seconds < 0) seconds = 0;
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%d:%02d", seconds / 60, seconds % 60);
+        return buf;
+    }
+
+    static std::string FormatSignedDelta(const std::string& metric, double delta)
+    {
+        const char* sign = delta >= 0.0 ? "+" : "-";
+        const double mag = delta < 0.0 ? -delta : delta;
+        char buf[48];
+        if (metric == "best_lap" || metric == "race_time")
+        {
+            if (mag >= 60.0)
+            {
+                const int m = static_cast<int>(mag / 60.0);
+                snprintf(buf, sizeof(buf), "%s%d:%06.3f", sign, m, mag - m * 60.0);
+            }
+            else
+            {
+                snprintf(buf, sizeof(buf), "%s%.3f s", sign, mag);
+            }
+            return buf;
+        }
+        if (metric == "top_speed")
+        {
+            snprintf(buf, sizeof(buf), "%s%.1f km/h", sign, mag);
+            return buf;
+        }
+        if (metric == "wheelie")
+        {
+            snprintf(buf, sizeof(buf), "%s%.1f m", sign, mag);
+            return buf;
+        }
+        snprintf(buf, sizeof(buf), "%s%.0f pts", sign, mag);
+        return buf;
+    }
+
+    static const Board* PickPaceBoard(const std::vector<Board>& boards, bool* oneLapRace)
+    {
+        *oneLapRace = false;
+        const Board* bestLap = nullptr;
+        const Board* raceTime = nullptr;
+        const Board* topSpeed = nullptr;
+        for (const Board& b : boards)
+        {
+            if (b.metric == "score") return &b;
+            if (b.metric == "wheelie") return &b;
+            if (b.metric == "best_lap") bestLap = &b;
+            else if (b.metric == "race_time") raceTime = &b;
+            else if (b.metric == "top_speed") topSpeed = &b;
+        }
+        if (raceTime && raceTime->laps == 1)
+        {
+            *oneLapRace = true;
+            return raceTime;
+        }
+        if (bestLap) return bestLap;
+        if (raceTime) return raceTime;
+        return topSpeed;
+    }
+
+    static void DrawPaceBar(const std::string& mode, const std::vector<Board>& boards, const RaceResults::LivePace& pace, float s)
+    {
+        if (!pace.active) return;
+
+        bool oneLapRace = false;
+        const Board* board = PickPaceBoard(boards, &oneLapRace);
+        std::string metric = board ? board->metric : (mode.find("Drift") != std::string::npos ? "score" : "best_lap");
+        double target = 0.0;
+        std::string targetLabel;
+        if (board && board->metric != "wheelie")
+        {
+            if (board->best > 0.0) { target = board->best; targetLabel = board->place == 1 ? "PB \xC2\xB7 #1" : "PB"; }
+            else if (board->beat > 0.0) { target = board->beat; targetLabel = "To beat"; }
+            else if (board->record > 0.0) { target = board->record; targetLabel = "#1 Record"; }
+        }
+
+        double current = 0.0;
+        const char* heading = "LIVE PACE";
+        if (metric == "score") { current = pace.score; heading = "LIVE SCORE"; }
+        else if (metric == "wheelie") { current = pace.raceElapsed; metric = "race_time"; heading = "LIVE RUN"; }
+        else if (metric == "top_speed") { current = pace.topSpeedKmh; heading = "PEAK SPEED"; }
+        else if (metric == "race_time" || oneLapRace) { current = pace.raceElapsed; heading = "LIVE RUN"; }
+        else { current = pace.lapElapsed; heading = "CURRENT LAP"; }
+
+        ImGui::Dummy(ImVec2(0.0f, 8.0f * s));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0.0f, 6.0f * s));
+
+        ImGui::PushFont(g_fontMicro);
+        if (metric == "best_lap" && pace.lapsCompleted >= 0)
+            ImGui::TextColored(Text3, "%s \xC2\xB7 LAP %d", heading, pace.lapsCompleted + 1);
+        else
+            ImGui::TextColored(Text3, "%s", heading);
+        ImGui::PopFont();
+
+        const bool timed = metric == "best_lap" || metric == "race_time";
+        const std::string currentStr = FormatValue(metric, current);
+        ImVec4 barColour = Info;
+        ImVec4 deltaColour = Text2;
+        std::string deltaStr;
+        float fill = 0.0f;
+
+        if (target > 0.0)
+        {
+            const double delta = current - target;
+            if (timed)
+            {
+                const float ratio = static_cast<float>(current / target);
+                fill = ratio < 0.0f ? 0.0f : ratio > 1.0f ? 1.0f : ratio;
+                if (delta <= 0.0)
+                {
+                    barColour = ratio >= 0.85f ? Warning : Success;
+                    deltaColour = barColour;
+                }
+                else
+                {
+                    barColour = Danger;
+                    deltaColour = Danger;
+                }
+            }
+            else
+            {
+                const float ratio = static_cast<float>(current / target);
+                fill = ratio < 0.0f ? 0.0f : ratio > 1.0f ? 1.0f : ratio;
+                if (delta >= 0.0)
+                {
+                    barColour = Success;
+                    deltaColour = Success;
+                }
+                else
+                {
+                    barColour = Info;
+                    deltaColour = Text2;
+                }
+            }
+            deltaStr = FormatSignedDelta(metric, delta);
+        }
+
+        ImGui::PushFont(g_fontMono);
+        ImGui::TextColored(Text1, "%s", currentStr.c_str());
+        if (!deltaStr.empty())
+        {
+            ImGui::SameLine(0.0f, 12.0f * s);
+            ImGui::TextColored(deltaColour, "%s", deltaStr.c_str());
+        }
+        ImGui::PopFont();
+
+        if (target > 0.0)
+        {
+            ImGui::Dummy(ImVec2(0.0f, 2.0f * s));
+            const ImVec2 at = ImGui::GetCursorScreenPos();
+            const float width = ImGui::GetContentRegionAvail().x;
+            const float height = 5.0f * s;
+            ImDrawList* draw = ImGui::GetWindowDrawList();
+            draw->AddRectFilled(at, ImVec2(at.x + width, at.y + height), ImGui::GetColorU32(Line), height);
+            if (fill > 0.0f)
+                draw->AddRectFilled(at, ImVec2(at.x + width * fill, at.y + height), ImGui::GetColorU32(barColour), height);
+            ImGui::Dummy(ImVec2(width, height));
+
+            ImGui::PushFont(g_fontSmall);
+            ImGui::TextColored(Text3, "vs %s %s", targetLabel.c_str(), FormatValue(metric, target).c_str());
+            if (metric == "best_lap" && pace.bestLap > 0.0f)
+            {
+                ImGui::SameLine(0.0f, 12.0f * s);
+                ImGui::TextColored(Text2, "Session %s", FormatValue("best_lap", pace.bestLap).c_str());
+            }
+            ImGui::PopFont();
+        }
+
+        if (pace.lastSplitLap > 0 && pace.lastSplitTime > 0.0f && (metric == "best_lap" || metric == "race_time"))
+        {
+            ImGui::PushFont(g_fontSmall);
+            if (target > 0.0 && metric == "best_lap")
+            {
+                const double splitDelta = pace.lastSplitTime - target;
+                ImGui::TextColored(splitDelta <= 0.0 ? Success : Danger, "Last lap #%d: %s (%s)",
+                                   pace.lastSplitLap, FormatValue("best_lap", pace.lastSplitTime).c_str(),
+                                   FormatSignedDelta("best_lap", splitDelta).c_str());
+            }
+            else
+            {
+                ImGui::TextColored(Text2, "Last lap #%d: %s", pace.lastSplitLap, FormatValue("best_lap", pace.lastSplitTime).c_str());
+            }
+            ImGui::PopFont();
+        }
+    }
+
+    static void DrawStanding(const std::string& trackName, const std::string& mode, const std::vector<Board>& boards,
+                             bool paceBarShown, const RaceResults::LivePace& pace, float s)
     {
         const ImVec2 display = ImGui::GetIO().DisplaySize;
         const float margin = 24.0f * s;
@@ -338,11 +539,43 @@ namespace Overlay
             }
             ImGui::EndTable();
         }
+        if (paceBarShown) DrawPaceBar(mode, boards, pace, s);
         ImGui::End();
     }
 
-    // Who is in the room and which car each has picked, in the standing card's corner while not racing.
-    static void DrawLobby(const std::vector<std::pair<std::string, std::string> >& cars, float s)
+    static std::string FormatAtmosphere(const std::string& atm)
+    {
+        if (atm.empty()) return std::string();
+        std::string out = atm;
+        if (out[0] >= 'a' && out[0] <= 'z') out[0] = static_cast<char>(out[0] - ('a' - 'A'));
+        return out;
+    }
+
+    static ImVec4 StatusColour(const std::string& status)
+    {
+        if (status == "ready") return Success;
+        if (status == "picking") return Warning;
+        if (status == "blocked") return Danger;
+        if (status == "racing") return Info;
+        return Text2;
+    }
+
+    static const char* StatusLabel(const std::string& status)
+    {
+        if (status == "ready") return "Ready";
+        if (status == "menus") return "In menus";
+        if (status == "picking") return "Picking";
+        if (status == "blocked") return "Blocked";
+        if (status == "racing") return "Racing";
+        return "";
+    }
+
+    static void DrawCardTitle(const char* title, const ImVec4& dot, float s);
+
+    // Who is in the room, race day context, live timer state, and each player's status.
+    static void DrawLobby(const std::string& room, const std::string& atmosphere, int eventIndex, int eventCount,
+                          const std::vector<LobbyPlayer>& players, const LobbyTimerState& timer,
+                          const EventVote::View& vote, float s)
     {
         const ImVec2 display = ImGui::GetIO().DisplaySize;
         const float margin = 24.0f * s;
@@ -350,25 +583,102 @@ namespace Overlay
         const bool bottom = g_corner == BottomLeft || g_corner == BottomRight;
         ImGui::SetNextWindowPos(ImVec2(right ? display.x - margin : margin, bottom ? display.y - margin : margin), ImGuiCond_Always,
                                 ImVec2(right ? 1.0f : 0.0f, bottom ? 1.0f : 0.0f));
-        ImGui::SetNextWindowSizeConstraints(ImVec2(300.0f * s, 0.0f), ImVec2(460.0f * s, display.y));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(330.0f * s, 0.0f), ImVec2(480.0f * s, display.y));
         if (!ImGui::Begin("##lobby", nullptr, PanelFlags)) { ImGui::End(); return; }
-        ImGui::PushFont(g_fontBody);
-        ImGui::TextColored(Text1, "In this room");
-        ImGui::PopFont();
-        ImGui::Dummy(ImVec2(0.0f, 4.0f * s));
-        if (ImGui::BeginTable("##lobbycars", 2, ImGuiTableFlags_SizingFixedFit))
+
+        bool anyBlocked = false;
+        for (const auto& p : players) if (p.status == "blocked") anyBlocked = true;
+        const ImVec4 dot = timer.paused || anyBlocked ? Warning
+                         : (timer.ready > 0 && timer.ready == timer.total) ? Success : Info;
+        DrawCardTitle(room.empty() ? "In this room" : room.c_str(), dot, s);
+
+        const int totalEvents = eventCount > 0 ? eventCount : static_cast<int>(vote.events.size());
+        const int activeEvent = eventCount > 0 ? eventIndex : vote.current;
+        const std::string atm = FormatAtmosphere(atmosphere);
+        std::string context;
+        if (totalEvents > 0 && activeEvent >= 0) context = "Event " + std::to_string(activeEvent + 1) + "/" + std::to_string(totalEvents);
+        if (!atm.empty()) context += (context.empty() ? "" : " \xC2\xB7 ") + atm;
+        if (!context.empty())
         {
-            ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthFixed, 140.0f * s);
-            ImGui::TableSetupColumn("car", ImGuiTableColumnFlags_WidthStretch);
             ImGui::PushFont(g_fontSmall);
-            for (const auto& entry : cars)
+            ImGui::TextColored(Text2, "%s", context.c_str());
+            if (activeEvent >= 0 && static_cast<size_t>(activeEvent) < vote.events.size())
+            {
+                ImGui::TextColored(Text1, "%s", vote.events[static_cast<size_t>(activeEvent)].c_str());
+            }
+            ImGui::PopFont();
+        }
+
+        ImGui::Dummy(ImVec2(0.0f, 3.0f * s));
+        ImGui::PushFont(g_fontSmall);
+        const int readyCount = timer.total > 0 ? timer.ready : [&]() {
+            int r = 0; for (const auto& p : players) if (p.status == "ready") ++r; return r;
+        }();
+        const int totalCount = timer.total > 0 ? timer.total : static_cast<int>(players.size());
+
+        if (timer.seconds >= 0)
+        {
+            const std::string clk = FormatClock(timer.seconds);
+            if (timer.paused)
+            {
+                std::string label = timer.reason == "vote" ? "Paused \xC2\xB7 Event vote"
+                                  : (timer.reason == "car" && !timer.who.empty()) ? "Waiting for " + timer.who + " to pick a car"
+                                  : timer.reason == "car" ? "Paused \xC2\xB7 Picking car"
+                                  : "Paused";
+                ImGui::TextColored(Warning, "%s", label.c_str());
+                ImGui::SameLine(0.0f, 8.0f * s);
+                ImGui::PushFont(g_fontMono);
+                ImGui::TextColored(Warning, "%s", clk.c_str());
+                ImGui::PopFont();
+            }
+            else if (timer.reason == "ready" || (timer.seconds <= 10 && readyCount == totalCount && totalCount > 0))
+            {
+                ImGui::TextColored(Success, "Everyone ready \xC2\xB7 starting in");
+                ImGui::SameLine(0.0f, 6.0f * s);
+                ImGui::PushFont(g_fontMono);
+                ImGui::TextColored(Success, "%s", clk.c_str());
+                ImGui::PopFont();
+            }
+            else
+            {
+                ImGui::TextColored(Text2, "Starting in");
+                ImGui::SameLine(0.0f, 6.0f * s);
+                ImGui::PushFont(g_fontMono);
+                ImGui::TextColored(Text1, "%s", clk.c_str());
+                ImGui::PopFont();
+                ImGui::SameLine(0.0f, 8.0f * s);
+                if (timer.allReadyIn > 0)
+                    ImGui::TextColored(Success, "\xC2\xB7 skip in %ds", timer.allReadyIn);
+                else
+                    ImGui::TextColored(Text3, "\xC2\xB7 %d/%d ready", readyCount, totalCount);
+            }
+        }
+        else if (totalCount > 0)
+        {
+            ImGui::TextColored(Text3, "Waiting for players \xC2\xB7 %d/%d ready", readyCount, totalCount);
+        }
+        ImGui::PopFont();
+
+        ImGui::Dummy(ImVec2(0.0f, 4.0f * s));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0.0f, 4.0f * s));
+
+        if (ImGui::BeginTable("##lobbycars", 3, ImGuiTableFlags_SizingFixedFit))
+        {
+            ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthFixed, 118.0f * s);
+            ImGui::TableSetupColumn("car", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("state", ImGuiTableColumnFlags_WidthFixed, 76.0f * s);
+            ImGui::PushFont(g_fontSmall);
+            for (const auto& entry : players)
             {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::TextColored(Text1, "%s", entry.first.c_str());
+                ImGui::TextColored(Text1, "%s", entry.name.c_str());
                 ImGui::TableSetColumnIndex(1);
-                if (entry.second.empty()) ImGui::TextColored(Text3, "Picking a car");
-                else ImGui::TextColored(Text2, "%s", entry.second.c_str());
+                if (entry.car.empty()) ImGui::TextColored(Text3, "Picking a car");
+                else ImGui::TextColored(Text2, "%s", entry.car.c_str());
+                ImGui::TableSetColumnIndex(2);
+                ImGui::TextColored(StatusColour(entry.status), "%s", StatusLabel(entry.status));
             }
             ImGui::PopFont();
             ImGui::EndTable();
@@ -599,17 +909,28 @@ namespace Overlay
         const EventVote::View vote = EventVote::Snapshot();
 
         // Copy what to show, so the other threads aren't held up while drawing.
-        bool showStanding, showLobby;
-        std::string trackName, mode;
+        bool showStanding, showLobby, paceBarShown;
+        std::string trackName, mode, lobbyRoom, lobbyAtmosphere;
+        int lobbyEvent = 0, lobbyEvents = 0;
         std::vector<Board> boards;
         std::vector<Notice> notices;
-        std::vector<std::pair<std::string, std::string> > lobby;
+        std::vector<LobbyPlayer> lobbyPlayers;
+        LobbyTimerState lobbyTimer;
         const double now = Now();
         {
             Guard guard;
             showStanding = g_racing && !g_standingTrack.empty() && g_standingTrack == g_trackKey && g_standingMode == g_raceMode;
-            showLobby = g_lobbyCarsShown && !g_racing && !g_lobbyCars.empty();
-            if (showLobby) lobby = g_lobbyCars;
+            showLobby = g_lobbyCarsShown && !g_racing && !g_lobbyPlayers.empty();
+            if (showLobby)
+            {
+                lobbyRoom = g_lobbyRoom;
+                lobbyAtmosphere = g_lobbyAtmosphere;
+                lobbyEvent = g_lobbyEventIndex;
+                lobbyEvents = g_lobbyEventCount;
+                lobbyPlayers = g_lobbyPlayers;
+                lobbyTimer = g_lobbyTimer;
+            }
+            paceBarShown = g_paceBarShown;
             trackName = g_trackName.empty() ? g_trackKey : g_trackName;
             mode = g_raceMode;
             boards = g_boards;
@@ -663,8 +984,9 @@ namespace Overlay
         const float s = g_fontScaleBase * io.FontGlobalScale;
         ImGui_ImplDX9_NewFrame();
         ImGui::NewFrame();
-        if (showStanding) DrawStanding(trackName, mode, boards, s);
-        if (showLobby) DrawLobby(lobby, s);
+        const RaceResults::LivePace pace = (showStanding && paceBarShown) ? RaceResults::GetLivePace() : RaceResults::LivePace();
+        if (showStanding) DrawStanding(trackName, mode, boards, paceBarShown, pace, s);
+        if (showLobby) DrawLobby(lobbyRoom, lobbyAtmosphere, lobbyEvent, lobbyEvents, lobbyPlayers, lobbyTimer, vote, s);
         if (g_notices) DrawNotices(notices, now, s);
         if (vote.voteActive) DrawVotePopup(vote, s);
         if (vote.windowOpen) DrawVoteWindow(vote, s);
@@ -764,6 +1086,7 @@ namespace Overlay
             g_notices = GetPrivateProfileIntA("Overlay", "Notifications", 1, settings.c_str()) != 0;
             g_test = GetPrivateProfileIntA("Overlay", "Test", 0, settings.c_str()) != 0;
             g_lobbyCarsShown = GetPrivateProfileIntA("Overlay", "LobbyCars", 1, settings.c_str()) != 0;
+            g_paceBarShown = GetPrivateProfileIntA("Overlay", "PaceBar", 1, settings.c_str()) != 0;
             char corner[32] = {};
             GetPrivateProfileStringA("Overlay", "Position", "TopRight", corner, sizeof(corner), settings.c_str());
             if (_stricmp(corner, "TopLeft") == 0) g_corner = TopLeft;
@@ -814,10 +1137,40 @@ namespace Overlay
         if (ask) ServerLink::RequestStanding(rawTrack, raceMode, VaultFixes::SpeedLimit());
     }
 
-    void SetLobbyCars(const std::vector<std::pair<std::string, std::string> >& cars)
+    void SetLobbyState(const std::string& room, const std::string& atmosphere, int eventIndex, int eventCount,
+                       const std::vector<LobbyPlayer>& players)
     {
         Guard guard;
-        g_lobbyCars = cars;
+        g_lobbyRoom = room;
+        g_lobbyAtmosphere = atmosphere;
+        g_lobbyEventIndex = eventIndex;
+        g_lobbyEventCount = eventCount;
+        g_lobbyPlayers = players;
+    }
+
+    void SetLobbyTimer(const LobbyTimerState& timer)
+    {
+        Guard guard;
+        g_lobbyTimer = timer;
+    }
+
+    bool GetPausedTimerSeconds(int* outSeconds)
+    {
+        Guard guard;
+        if (g_racing || !g_lobbyTimer.paused || g_lobbyTimer.seconds < 0) return false;
+        if (outSeconds) *outSeconds = g_lobbyTimer.seconds;
+        return true;
+    }
+
+    void ResetRoomState()
+    {
+        Guard guard;
+        g_lobbyRoom.clear();
+        g_lobbyAtmosphere.clear();
+        g_lobbyEventIndex = 0;
+        g_lobbyEventCount = 0;
+        g_lobbyPlayers.clear();
+        g_lobbyTimer = LobbyTimerState();
     }
 
     void SetStanding(const std::string& trackKey, const std::string& raceMode, const std::vector<Board>& boards)
