@@ -1,5 +1,8 @@
 #include "game/tweaks.h"
+#include "game/hooks.h"
+#include "net/server_link.h"
 #include "log.h"
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -276,6 +279,95 @@ namespace Tweaks
         Log::Debug("[OpenProStreet] 60 Hz CarState sync & smoother active.\n");
     }
 
+    typedef void (__attribute__((thiscall)) *UnpackNetworkCarStateFn)(void*, void*, uint32_t, float);
+    typedef uint8_t (__attribute__((thiscall)) *UnpackExtrapStateFn)(void*, float, void*, uint32_t, int, float*);
+    typedef void (__attribute__((thiscall)) *ExtrapSetTargetFn)(void*, float);
+
+    static uintptr_t g_syncBaseModule = 0;
+    static void* g_origUnpackExtrapState = nullptr;
+    static bool g_hasIncomingCarId = false;
+    static uint32_t g_incomingCarId = 0;
+
+    static void __attribute__((fastcall)) NetCarStateBridge(
+        void* carSyncObj, uint32_t carId, void* bitStream, uint32_t flags, float timestamp)
+    {
+        const bool prevHas = g_hasIncomingCarId;
+        const uint32_t prevId = g_incomingCarId;
+        g_hasIncomingCarId = true;
+        g_incomingCarId = carId;
+        reinterpret_cast<UnpackNetworkCarStateFn>(g_syncBaseModule + 0x372420)(carSyncObj, bitStream, flags, timestamp);
+        g_hasIncomingCarId = prevHas;
+        g_incomingCarId = prevId;
+    }
+
+    static uint8_t __attribute__((thiscall)) UnpackExtrapState_Hook(
+        void* thisPtr, float senderTimestamp, void* bitStream, uint32_t flags, int racingState, float* clockOffset)
+    {
+        const uint8_t ret = reinterpret_cast<UnpackExtrapStateFn>(g_origUnpackExtrapState)(
+            thisPtr, senderTimestamp, bitStream, flags, racingState, clockOffset);
+        // racingState == 6 (live race): project unpacked state forward by one-way transit lead so remote cars
+        // match where the sender actually is now, then restore [this+0x7C] so per-frame updates don't double-step.
+        if (ret != 0 && g_hasIncomingCarId && racingState == 6 && thisPtr) {
+            const float leadSeconds = ServerLink::GetCarLeadSeconds(g_incomingCarId);
+            if (leadSeconds > 0.0f && leadSeconds <= 0.250f) {
+                float* const tsPtr = reinterpret_cast<float*>(reinterpret_cast<uintptr_t>(thisPtr) + 0x7C);
+                const float origTs = *tsPtr;
+                if (std::isfinite(origTs) && origTs > 0.0f && origTs < 86400.0f) {
+                    reinterpret_cast<ExtrapSetTargetFn>(g_syncBaseModule + 0x34F340)(thisPtr, origTs + leadSeconds);
+                    *tsPtr = origTs;
+                }
+            }
+        }
+        return ret;
+    }
+
+    static void InstallLatencyCompensation(uintptr_t baseModule)
+    {
+        g_syncBaseModule = baseModule;
+
+        const uintptr_t callSite = baseModule + 0x3C2420;
+        const uint8_t expectedCall[5] = { 0xE8, 0xFB, 0xFF, 0xFA, 0xFF };
+        const uintptr_t unpackFn = baseModule + 0x360B30;
+        const uint8_t expectedUnpack[7] = { 0x83, 0xEC, 0x48, 0x53, 0x56, 0x8B, 0xF1 };
+        const uintptr_t setTargetFn = baseModule + 0x34F340;
+
+        if (IsBadReadPtr(reinterpret_cast<void*>(callSite), sizeof(expectedCall)) ||
+            memcmp(reinterpret_cast<void*>(callSite), expectedCall, sizeof(expectedCall)) != 0 ||
+            IsBadReadPtr(reinterpret_cast<void*>(unpackFn), sizeof(expectedUnpack)) ||
+            memcmp(reinterpret_cast<void*>(unpackFn), expectedUnpack, sizeof(expectedUnpack)) != 0 ||
+            IsBadReadPtr(reinterpret_cast<void*>(setTargetFn), 1))
+        {
+            Log::Warn("[OpenProStreet] Latency compensation target bytes mismatch; skipping.\n");
+            return;
+        }
+
+        uint8_t* const stub = static_cast<uint8_t*>(VirtualAlloc(nullptr, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+        if (!stub) return;
+
+        // Pass ServerCarID ([msg + 0x830], with edi = msg + 0x0C) in edx to __fastcall NetCarStateBridge.
+        uint8_t* p = stub;
+        *p++ = 0x8B; *p++ = 0x97; *p++ = 0x24; *p++ = 0x08; *p++ = 0x00; *p++ = 0x00; // mov edx, [edi + 0x824]
+        *p++ = 0xE9;                                                                   // jmp NetCarStateBridge
+        const int32_t jmpRel = static_cast<int32_t>(reinterpret_cast<uintptr_t>(&NetCarStateBridge) - (reinterpret_cast<uintptr_t>(p) + 4));
+        memcpy(p, &jmpRel, 4);
+        p += 4;
+        FlushInstructionCache(GetCurrentProcess(), stub, static_cast<SIZE_T>(p - stub));
+
+        if (!Hooks::InstallDetour(reinterpret_cast<void*>(unpackFn), reinterpret_cast<void*>(&UnpackExtrapState_Hook), &g_origUnpackExtrapState, 7)) {
+            VirtualFree(stub, 0, MEM_RELEASE);
+            Log::Warn("[OpenProStreet] Latency compensation unpack hook failed.\n");
+            return;
+        }
+
+        uint8_t callPatch[5];
+        callPatch[0] = 0xE8;
+        const int32_t callRel = static_cast<int32_t>(reinterpret_cast<uintptr_t>(stub) - (callSite + 5));
+        memcpy(&callPatch[1], &callRel, 4);
+        PatchMemory(callSite, callPatch, sizeof(callPatch));
+        FlushInstructionCache(GetCurrentProcess(), reinterpret_cast<void*>(callSite), sizeof(callPatch));
+        Log::Debug("[OpenProStreet] Latency compensation enabled (one-way lead extrapolation).\n");
+    }
+
     void Init(uintptr_t baseModule)
     {
         if (!baseModule) return;
@@ -286,5 +378,6 @@ namespace Tweaks
         StayOnlineWithoutFocus(baseModule);
         NoEaAutoLogin(baseModule);
         ImproveMultiplayerCarSync(baseModule);
+        InstallLatencyCompensation(baseModule);
     }
 }

@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <sstream>
 
@@ -41,6 +42,37 @@ namespace ServerLink
     static uintptr_t g_baseModule = 0;
 
     static CRITICAL_SECTION g_lock;
+    static CRITICAL_SECTION g_pingLock;
+    static bool g_pingLockReady = false;
+    static constexpr DWORD PING_INTERVAL_MS = 2000;
+    static constexpr float MAX_CAR_LEAD_SECONDS = 0.120f;
+    static uint32_t g_pingToken = 0;
+    static uint64_t g_pendingPingSentUs = 0;
+    static DWORD g_lastPingSentTick = 0;
+    static bool g_pingSendNow = false;
+    static double g_rttSmoothedMs = -1.0;
+    static std::map<uint32_t, float> g_carLeadSeconds;
+
+    static uint64_t NowMicros() {
+        static LARGE_INTEGER freq = {};
+        if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
+        LARGE_INTEGER now;
+        QueryPerformanceCounter(&now);
+        return freq.QuadPart ? static_cast<uint64_t>((now.QuadPart * 1000000ULL) / freq.QuadPart) : 0;
+    }
+
+    static void ResetLatencyState() {
+        if (!g_pingLockReady) return;
+        EnterCriticalSection(&g_pingLock);
+        g_pingToken = 0;
+        g_pendingPingSentUs = 0;
+        g_lastPingSentTick = 0;
+        g_pingSendNow = false;
+        g_rttSmoothedMs = -1.0;
+        g_carLeadSeconds.clear();
+        LeaveCriticalSection(&g_pingLock);
+    }
+
     static SOCKET g_socket = INVALID_SOCKET;
     static std::unique_ptr<SecureClient> g_client;
     static std::string g_dataDirectory;
@@ -225,6 +257,40 @@ namespace ServerLink
             }
             Overlay::SetStanding(ParamValue(xml, "track_key"), ParamValue(xml, "race_mode"), boards);
         }
+        if ((xml.find("<method> ping<") != std::string::npos || xml.find("<method> ping ") != std::string::npos) &&
+            xml.find("TRANSACTION_TYPE_REPLY") != std::string::npos && g_pingLockReady) {
+            const uint32_t echoed = static_cast<uint32_t>(strtoul(ParamValue(xml, "t").c_str(), nullptr, 10));
+            EnterCriticalSection(&g_pingLock);
+            if (echoed != 0 && echoed == g_pingToken && g_pendingPingSentUs != 0) {
+                const double sampleMs = static_cast<double>(NowMicros() - g_pendingPingSentUs) / 1000.0;
+                g_pendingPingSentUs = 0;
+                if (sampleMs >= 0.0 && sampleMs <= 1000.0) {
+                    const bool firstSample = g_rttSmoothedMs < 0.0;
+                    g_rttSmoothedMs = firstSample ? sampleMs : (g_rttSmoothedMs * 0.75 + sampleMs * 0.25);
+                    if (firstSample) g_pingSendNow = true;
+                }
+            }
+            LeaveCriticalSection(&g_pingLock);
+        }
+        if ((xml.find("<method> carPings<") != std::string::npos || xml.find("<method> carPings ") != std::string::npos) &&
+            g_pingLockReady) {
+            const int count = atoi(ParamValue(xml, "n").c_str());
+            std::map<uint32_t, float> updated;
+            for (int i = 0; i < count && i < 16; ++i) {
+                const std::string entry = ParamValue(xml, "p" + std::to_string(i));
+                const size_t bar = entry.find('|');
+                if (bar == std::string::npos) continue;
+                const uint32_t carId = static_cast<uint32_t>(strtoul(entry.substr(0, bar).c_str(), nullptr, 10));
+                const int leadMs = atoi(entry.substr(bar + 1).c_str());
+                if (carId == 0 || leadMs <= 0) continue;
+                float leadSec = static_cast<float>(leadMs) * 0.001f;
+                if (leadSec > MAX_CAR_LEAD_SECONDS) leadSec = MAX_CAR_LEAD_SECONDS;
+                updated[carId] = leadSec;
+            }
+            EnterCriticalSection(&g_pingLock);
+            g_carLeadSeconds.swap(updated);
+            LeaveCriticalSection(&g_pingLock);
+        }
     }
 
     static void SendCommand(const char* service, const char* method, const std::vector<std::pair<std::string, std::string> >& params) {
@@ -284,6 +350,7 @@ namespace ServerLink
             }
         }
         if (closedOurs) {
+            ResetLatencyState();
             EventVote::Reset();
             Overlay::ResetRoomState();
         }
@@ -294,7 +361,33 @@ namespace ServerLink
         for (;;) {
             {
                 Lock lock;
-                if (g_client) g_client->Tick(GetTickCount());
+                if (g_client) {
+                    const DWORD nowTick = GetTickCount();
+                    g_client->Tick(nowTick);
+                    bool sendPing = false;
+                    int reportedRtt = -1;
+                    uint32_t token = 0;
+                    if (g_pingLockReady && g_client->GetState() == SecureClient::State::Established) {
+                        EnterCriticalSection(&g_pingLock);
+                        if (g_pingSendNow || g_lastPingSentTick == 0 ||
+                            static_cast<DWORD>(nowTick - g_lastPingSentTick) >= PING_INTERVAL_MS) {
+                            g_pingSendNow = false;
+                            g_lastPingSentTick = nowTick;
+                            token = ++g_pingToken;
+                            if (token == 0) token = ++g_pingToken;
+                            g_pendingPingSentUs = NowMicros();
+                            if (g_rttSmoothedMs >= 0.0) reportedRtt = static_cast<int>(g_rttSmoothedMs + 0.5);
+                            sendPing = true;
+                        }
+                        LeaveCriticalSection(&g_pingLock);
+                    }
+                    if (sendPing) {
+                        std::vector<std::pair<std::string, std::string> > params;
+                        params.push_back(std::make_pair(std::string("t"), std::to_string(token)));
+                        if (reportedRtt >= 0) params.push_back(std::make_pair(std::string("rtt"), std::to_string(reportedRtt)));
+                        SendCommand("client", "ping", params);
+                    }
+                }
             }
             Sleep(50);
         }
@@ -340,6 +433,8 @@ namespace ServerLink
 
     void Init(uintptr_t baseModule) {
         InitializeCriticalSection(&g_lock);
+        InitializeCriticalSection(&g_pingLock);
+        g_pingLockReady = true;
 
         const char* appData = getenv("LOCALAPPDATA");
         g_dataDirectory = std::string(appData ? appData : ".") + "\\OpenProStreet";
@@ -381,6 +476,7 @@ namespace ServerLink
 
         CarLock::SetAllowedCars(""); // a new connection starts outside any room
         EventVote::Reset();
+        ResetLatencyState();
         g_client.reset(new SecureClient(g_identity, ephemeral, callbacks));
         g_client->Begin(GetTickCount());
         std::vector<std::pair<std::string, std::string> > params;
@@ -476,5 +572,15 @@ namespace ServerLink
         params.push_back(std::make_pair(std::string("yes"), std::string(yes ? "1" : "0")));
         Lock lock;
         if (g_client && g_client->GetState() == SecureClient::State::Established) SendCommand("client", "castVote", params);
+    }
+
+    float GetCarLeadSeconds(uint32_t carId) {
+        if (!g_pingLockReady || carId == 0) return 0.0f;
+        float lead = 0.0f;
+        EnterCriticalSection(&g_pingLock);
+        const std::map<uint32_t, float>::const_iterator it = g_carLeadSeconds.find(carId);
+        if (it != g_carLeadSeconds.end()) lead = it->second;
+        LeaveCriticalSection(&g_pingLock);
+        return lead;
     }
 }

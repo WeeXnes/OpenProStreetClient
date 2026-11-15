@@ -43,6 +43,9 @@ namespace ServerLink
     void CallVote(int eventIndex);
     void CastVote(bool yes);
 
+    // One-way network lead in seconds for a remote player's ServerCarID (0.0f if unknown).
+    float GetCarLeadSeconds(uint32_t carId);
+
     // The player picked quick match in the game's menus, so the server should match them. This
     // happens before the game connects, so it's sent as soon as the connection starts.
     // location, difficulty and events ("key:laps:heats,...") are the race day to create if no room
