@@ -43,6 +43,7 @@ namespace Overlay
     {
         std::string kind, title;
         std::vector<std::string> lines;
+        double duration = 7.0;
         double shownAt = -1.0; // seconds on the overlay's clock, set when first drawn
     };
 
@@ -688,18 +689,19 @@ namespace Overlay
 
     static ImVec4 NoticeColour(const std::string& kind)
     {
-        return kind == "record" ? Gold : kind == "best" ? Success : kind == "not_counted" ? Warning : Text2;
+        return kind == "record" ? Gold : kind == "best" ? Success : kind == "not_counted" ? Warning : kind == "refused" ? Danger : Text2;
     }
 
     // Short notifications, top centre, newest at the top. Each fades in, stays, and fades out.
     static void DrawNotices(std::vector<Notice>& notices, double now, float s)
     {
-        const double life = 7.0, fade = 0.25;
+        const double fade = 0.25;
         const ImVec2 display = ImGui::GetIO().DisplaySize;
         float y = 24.0f * s;
         int index = 0;
         for (Notice& n : notices)
         {
+            const double life = n.duration;
             const double age = now - n.shownAt;
             float alpha = 1.0f;
             if (age < fade) alpha = static_cast<float>(age / fade);
@@ -934,12 +936,15 @@ namespace Overlay
             trackName = g_trackName.empty() ? g_trackKey : g_trackName;
             mode = g_raceMode;
             boards = g_boards;
-            while (!g_noticeQueue.empty() && g_noticeQueue.front().shownAt >= 0.0 && now - g_noticeQueue.front().shownAt > 7.0)
-                g_noticeQueue.pop_front();
-            for (size_t i = 0; i < g_noticeQueue.size() && i < 4; ++i)
+            for (std::deque<Notice>::iterator it = g_noticeQueue.begin(); it != g_noticeQueue.end(); )
+            {
+                if (it->shownAt >= 0.0 && now - it->shownAt > it->duration) it = g_noticeQueue.erase(it);
+                else ++it;
+            }
+            for (size_t i = 0; i < g_noticeQueue.size() && notices.size() < 4; ++i)
             {
                 if (g_noticeQueue[i].shownAt < 0.0) g_noticeQueue[i].shownAt = now;
-                notices.push_back(g_noticeQueue[i]);
+                if (g_notices || g_noticeQueue[i].kind == "refused") notices.push_back(g_noticeQueue[i]);
             }
         }
         if (!showStanding && !showLobby && notices.empty() && !g_test && !vote.windowOpen && !vote.voteActive) return;
@@ -987,7 +992,7 @@ namespace Overlay
         const RaceResults::LivePace pace = (showStanding && paceBarShown) ? RaceResults::GetLivePace() : RaceResults::LivePace();
         if (showStanding) DrawStanding(trackName, mode, boards, paceBarShown, pace, s);
         if (showLobby) DrawLobby(lobbyRoom, lobbyAtmosphere, lobbyEvent, lobbyEvents, lobbyPlayers, lobbyTimer, vote, s);
-        if (g_notices) DrawNotices(notices, now, s);
+        if (!notices.empty()) DrawNotices(notices, now, s);
         if (vote.voteActive) DrawVotePopup(vote, s);
         if (vote.windowOpen) DrawVoteWindow(vote, s);
         if (g_test)
@@ -1183,11 +1188,36 @@ namespace Overlay
 
     void OnConnected()
     {
+        {
+            Guard guard;
+            for (std::deque<Notice>::iterator it = g_noticeQueue.begin(); it != g_noticeQueue.end(); )
+            {
+                if (it->kind == "refused") it = g_noticeQueue.erase(it);
+                else ++it;
+            }
+        }
         if (!g_enabled || !g_notices) return;
         std::vector<std::string> lines;
         lines.push_back("Your times and place show here during races.");
         PushNotice("best", "OpenProStreet " + g_version + " connected", lines);
         Log::Event(Log::Tag::Client, "Overlay: connected notice queued\n");
+    }
+
+    void OnConnectionRefused(const std::string& title, const std::vector<std::string>& lines)
+    {
+        if (!g_enabled) return;
+        Guard guard;
+        for (std::deque<Notice>::iterator it = g_noticeQueue.begin(); it != g_noticeQueue.end(); )
+        {
+            if (it->kind == "refused") it = g_noticeQueue.erase(it);
+            else ++it;
+        }
+        Notice n;
+        n.kind = "refused";
+        n.title = title;
+        n.lines = lines;
+        n.duration = 20.0;
+        g_noticeQueue.push_front(n);
     }
 
     void PushNotice(const std::string& kind, const std::string& title, const std::vector<std::string>& lines)

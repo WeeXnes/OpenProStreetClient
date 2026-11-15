@@ -75,6 +75,7 @@ namespace ServerLink
 
     static SOCKET g_socket = INVALID_SOCKET;
     static std::unique_ptr<SecureClient> g_client;
+    static bool g_helloRejected = false;
     static std::string g_dataDirectory;
     static uint8_t g_identity[64];
     static bool g_hasIdentity = false;
@@ -143,13 +144,42 @@ namespace ServerLink
         return first == std::string::npos ? "" : value.substr(first, last - first + 1);
     }
 
+    static std::string ErrorValue(const std::string& xml) {
+        const std::string open = "<error>";
+        const size_t pos = xml.find(open);
+        if (pos == std::string::npos) return "";
+        const size_t start = pos + open.size();
+        const size_t end = xml.find("</error>", start);
+        if (end == std::string::npos) return "";
+        const std::string value = xml.substr(start, end - start);
+        const size_t first = value.find_first_not_of(' ');
+        const size_t last = value.find_last_not_of(' ');
+        return first == std::string::npos ? "" : value.substr(first, last - first + 1);
+    }
+
     static void OnServerMessage(const std::string& xml) {
         if (xml.find("<error>") != std::string::npos) {
+            const std::string err = ErrorValue(xml);
+            if (xml.find("<method> hello") != std::string::npos && err == "clientUpdateRequired") {
+                const std::string required = ParamValue(xml, "required");
+                g_helloRejected = true;
+                Log::Error("Connection refused: client v%s is outdated (server requires v%s).\n",
+                           Log::Highlight(version).c_str(),
+                           Log::Highlight(required.empty() ? "latest" : required).c_str());
+                std::vector<std::string> lines;
+                lines.push_back(required.empty()
+                                    ? ("Your client is v" + version + " (update required).")
+                                    : ("Your client is v" + version + " (need v" + required + ")."));
+                lines.push_back("Connection refused. Update to the latest version.");
+                Overlay::OnConnectionRefused("Client update required", lines);
+                return;
+            }
             Log::Warn("The server refused a request: %s\n", Log::Highlight(xml.substr(0, 300)).c_str());
             return;
         }
         // The server answered the client's hello: the encrypted connection works.
         if (xml.find("<method> hello") != std::string::npos && xml.find("TRANSACTION_TYPE_REPLY") != std::string::npos) {
+            g_helloRejected = false;
             Overlay::OnConnected();
         }
         // Sent on joining a room: the race day's allowed cars, or nothing for every car.
@@ -224,7 +254,12 @@ namespace ServerLink
             std::vector<std::string> lines;
             const int count = atoi(ParamValue(xml, "lines").c_str());
             for (int i = 0; i < count && i < 12; ++i) lines.push_back(ParamValue(xml, "line" + std::to_string(i)));
-            Overlay::PushNotice(ParamValue(xml, "kind"), ParamValue(xml, "title"), lines);
+            const std::string title = ParamValue(xml, "title");
+            if (title == "Client update required") {
+                if (!g_helloRejected) Overlay::OnConnectionRefused(title, lines);
+            } else {
+                Overlay::PushNotice(ParamValue(xml, "kind"), title, lines);
+            }
         }
         // Where the player stands on the event they're racing.
         if (xml.find("<method> standing") != std::string::npos) {
@@ -346,6 +381,7 @@ namespace ServerLink
             if (s == g_socket) {
                 g_socket = INVALID_SOCKET;
                 g_client.reset();
+                g_helloRejected = false;
                 closedOurs = true;
             }
         }
@@ -468,6 +504,7 @@ namespace ServerLink
 
         Lock lock;
         g_socket = s;
+        g_helloRejected = false;
 
         SecureClient::Callbacks callbacks;
         callbacks.send = [s](const uint8_t* data, int len) { g_realSend(s, reinterpret_cast<const char*>(data), len, 0); };

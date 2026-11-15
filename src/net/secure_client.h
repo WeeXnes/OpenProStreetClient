@@ -62,8 +62,9 @@ private:
     void SendHello();
     void OnCookie(const uint8_t* data, int len, uint32_t nowMs);
     void OnServerHello(const uint8_t* data, int len, uint32_t nowMs);
-    void OnServerFinish(const uint8_t* data, int len);
+    void OnServerFinish(const uint8_t* data, int len, uint32_t nowMs);
     void Fail(const char* reason);
+    void FlushOutgoingMessages(uint32_t nowMs);
     void FlushQueuedPackets(uint32_t nowMs);
     void SendSealed(const uint8_t* plain, int len);
     bool CheckReplay(uint64_t counter);

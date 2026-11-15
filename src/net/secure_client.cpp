@@ -146,6 +146,13 @@ void SecureClient::SendSealed(const uint8_t* plain, int len) {
     m_callbacks.send(sealed, len + SEALED_OVERHEAD);
 }
 
+void SecureClient::FlushOutgoingMessages(uint32_t nowMs) {
+    for (size_t i = 0; i < m_outgoingMessages.size(); ++i) {
+        m_outgoingMessages[i].lastSent = nowMs;
+        SendSealed(m_outgoingMessages[i].packet.data(), static_cast<int>(m_outgoingMessages[i].packet.size()));
+    }
+}
+
 void SecureClient::FlushQueuedPackets(uint32_t) {
     while (!m_queuedGamePackets.empty()) {
         const std::vector<uint8_t>& packet = m_queuedGamePackets.front();
@@ -236,7 +243,7 @@ void SecureClient::OnServerHello(const uint8_t* data, int len, uint32_t nowMs) {
     m_callbacks.send(m_finishPacket, FINISH_SIZE);
 }
 
-void SecureClient::OnServerFinish(const uint8_t* data, int len) {
+void SecureClient::OnServerFinish(const uint8_t* data, int len, uint32_t nowMs) {
     if (m_step != Step::Finish || len != FINISH_REPLY_SIZE) return;
     uint8_t status = 1;
     if (!AeadUnlock(m_recvKey, 0, data, 4, data + 20, 1, data + 4, &status)) return;
@@ -248,7 +255,8 @@ void SecureClient::OnServerFinish(const uint8_t* data, int len) {
     m_state = State::Established;
     crypto_wipe(m_ephemeralSecret, sizeof(m_ephemeralSecret));
     if (m_callbacks.log) m_callbacks.log("Encrypted connection established.");
-    FlushQueuedPackets(0);
+    FlushOutgoingMessages(nowMs);
+    FlushQueuedPackets(nowMs);
 }
 
 bool SecureClient::CheckReplay(uint64_t counter) {
@@ -313,7 +321,7 @@ int SecureClient::OnNetworkPacket(const uint8_t* data, int len, uint8_t* out, ui
         if (m_state != State::Handshaking || len < 4) return 0;
         if (data[1] == 2) OnCookie(data, len, nowMs);
         else if (data[1] == 3) OnServerHello(data, len, nowMs);
-        else if (data[1] == 5) OnServerFinish(data, len);
+        else if (data[1] == 5) OnServerFinish(data, len, nowMs);
         return 0;
     }
 
