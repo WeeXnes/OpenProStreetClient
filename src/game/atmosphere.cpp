@@ -47,6 +47,9 @@ namespace Atmosphere
     static const size_t EFFECT_SET_FLOAT_ARRAY = 32;
     static const size_t EFFECT_SET_VECTOR = 34;
     static const size_t EFFECT_SET_VECTOR_ARRAY = 36;
+    // ID3DXEffect's own, after ID3DXBaseEffect's 57. nfs.exe sets nearly every shader value with it
+    // (call [vtable+138h], as at 0x7017FB), not with the typed setters above.
+    static const size_t EFFECT_SET_RAW_VALUE = 78;
 
     typedef ULONG   (WINAPI *ReleaseFn)(void* effect);
     typedef HRESULT (WINAPI *GetParameterDescFn)(void* effect, Handle parameter, ParameterDesc* desc);
@@ -55,6 +58,7 @@ namespace Atmosphere
     typedef HRESULT (WINAPI *SetFloatArrayFn)(void* effect, Handle parameter, const float* values, UINT count);
     typedef HRESULT (WINAPI *SetVectorFn)(void* effect, Handle parameter, const float* vector4);
     typedef HRESULT (WINAPI *SetVectorArrayFn)(void* effect, Handle parameter, const float* vector4s, UINT count);
+    typedef HRESULT (WINAPI *SetRawValueFn)(void* effect, Handle parameter, const void* data, UINT byteOffset, UINT bytes);
 
     // D3DXCreateEffectFromResourceA and D3DXCreateEffect take the same nine arguments, the effect
     // eighth. D3DXCreateEffectEx has a tenth, so its effect is ninth.
@@ -71,6 +75,7 @@ namespace Atmosphere
     static SetFloatArrayFn    g_realSetFloatArray = nullptr;
     static SetVectorFn        g_realSetVector = nullptr;
     static SetVectorArrayFn   g_realSetVectorArray = nullptr;
+    static SetRawValueFn      g_realSetRawValue = nullptr;
 
     // ---- Presets ----
 
@@ -260,6 +265,20 @@ namespace Atmosphere
         return g_realSetVectorArray(effect, parameter, values, count);
     }
 
+    // Raw bytes into the parameter, from byteOffset. Only whole vectors from a vector boundary are
+    // tinted, so each float still lines up with its x, y, z or w.
+    static HRESULT WINAPI SetRawValueHook(void* effect, Handle parameter, const void* data, UINT byteOffset, UINT bytes)
+    {
+        const UINT count = bytes / sizeof(float);
+        const int slot = data && byteOffset % 16 == 0 && bytes % sizeof(float) == 0 && count <= MAX_FLOATS
+            ? SlotOf(effect, parameter, static_cast<const float*>(data), count, "SetRawValue") : -1;
+        if (slot < 0 || g_preset.load() == Day) return g_realSetRawValue(effect, parameter, data, byteOffset, bytes);
+        float values[MAX_FLOATS];
+        memcpy(values, data, bytes);
+        Apply(slot, values, count, count == 1);
+        return g_realSetRawValue(effect, parameter, values, byteOffset, bytes);
+    }
+
     // A freed effect's address can come back as another effect, with other handles.
     static ULONG WINAPI ReleaseHook(void* effect)
     {
@@ -293,7 +312,8 @@ namespace Atmosphere
             HookAt(vtable, EFFECT_SET_FLOAT, reinterpret_cast<void*>(SetFloatHook), reinterpret_cast<void**>(&g_realSetFloat), "SetFloat") &&
             HookAt(vtable, EFFECT_SET_FLOAT_ARRAY, reinterpret_cast<void*>(SetFloatArrayHook), reinterpret_cast<void**>(&g_realSetFloatArray), "SetFloatArray") &&
             HookAt(vtable, EFFECT_SET_VECTOR, reinterpret_cast<void*>(SetVectorHook), reinterpret_cast<void**>(&g_realSetVector), "SetVector") &&
-            HookAt(vtable, EFFECT_SET_VECTOR_ARRAY, reinterpret_cast<void*>(SetVectorArrayHook), reinterpret_cast<void**>(&g_realSetVectorArray), "SetVectorArray");
+            HookAt(vtable, EFFECT_SET_VECTOR_ARRAY, reinterpret_cast<void*>(SetVectorArrayHook), reinterpret_cast<void**>(&g_realSetVectorArray), "SetVectorArray") &&
+            HookAt(vtable, EFFECT_SET_RAW_VALUE, reinterpret_cast<void*>(SetRawValueHook), reinterpret_cast<void**>(&g_realSetRawValue), "SetRawValue");
         if (ok) Log::Debug("[OpenProStreet] Atmosphere: hooked the game's effects in %s\n", D3DHooks::ModuleOf(vtable[EFFECT_SET_VECTOR]));
     }
 
