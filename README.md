@@ -161,7 +161,7 @@ FFSKYCOLOR=0.15,0.18,0.3
 cfBrightness=0.55
 ```
 
-The defaults also tint `cvInstanceWorldSunColour`, `cvAmbientColour`, `FogColor` and `cfBloomScale`, and the car's own light: `cmLocalColourMatrix` (a colour per row), `cvLightColour` and `cvSpecularColour`. `[Atmosphere.Dusk]` works the same way. With `Log=1`, the detailed log names each parameter, the effect it belongs to and the value the game first sets, and marks the ones a look changes. The game sets nearly all of them with `ID3DXEffect::SetRawValue`.
+The defaults also tint `cvInstanceWorldSunColour`, `cvAmbientColour`, `FogColor` and `cfBloomScale`, and the car's own light: `cmLocalColourMatrix` (a colour per row), `cvLightColour` and `cvSpecularColour`. A rule written `EFFECT:parameter` applies in that effect only, and wins over one for the parameter everywhere. The sky darkens that way: `IDI_SKY_FX:cvVertexPowerBrightness=1,0.07,1,1`, as the sky's shader only uses its y, as brightness. `[Atmosphere.Dusk]` works the same way. With `Log=1`, the detailed log names each parameter, the effect it belongs to and the value the game first sets, and marks the ones a look changes. The game sets nearly all of them with `ID3DXEffect::SetRawValue`.
 
 ### Display test
 

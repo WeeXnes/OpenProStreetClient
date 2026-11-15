@@ -131,6 +131,9 @@ namespace Atmosphere
         {"cvLightColour",            {1.00f, 0.70f, 0.50f, 1.0f}, {0.20f, 0.24f, 0.40f, 1.0f}},
         {"cvSpecularColour",         {1.00f, 0.75f, 0.60f, 1.0f}, {0.35f, 0.40f, 0.60f, 1.0f}},
         {"cfBrightness",             {0.85f, 1.00f, 1.00f, 1.0f}, {0.55f, 1.00f, 1.00f, 1.0f}},
+        // The sky (fx\sky.efx) is its texture brightened by its alpha, times cvVertexPowerBrightness.y,
+        // then tone-mapped as c / (c + 1). Only y matters there.
+        {"IDI_SKY_FX:cvVertexPowerBrightness", {1.00f, 0.70f, 1.00f, 1.0f}, {1.00f, 0.07f, 1.00f, 1.0f}},
     };
 
     static int NameIndex(const std::string& name)
@@ -197,10 +200,15 @@ namespace Atmosphere
         if (g_getParameterDesc && SUCCEEDED(g_getParameterDesc(effect, parameter, &desc)) && desc.Name &&
             desc.Type == TYPE_FLOAT && (desc.Class == CLASS_SCALAR || desc.Class == CLASS_VECTOR)) {
             const std::string name = desc.Name;
-            for (size_t i = 0; i < g_names.size(); ++i)
-                if (g_names[i] == name) slot = static_cast<int>(i);
             const auto effectName = g_effectNames.find(effect);
             const std::string where = effectName != g_effectNames.end() ? effectName->second : std::string("an effect");
+            // "EFFECT:parameter" applies in that effect only, and wins over a rule for the parameter
+            // everywhere. The sky's brightness is cvVertexPowerBrightness, which the world uses too.
+            const std::string scoped = where + ":" + name;
+            for (size_t i = 0; i < g_names.size(); ++i)
+                if (g_names[i] == name && slot < 0) slot = static_cast<int>(i);
+            for (size_t i = 0; i < g_names.size(); ++i)
+                if (g_names[i] == scoped) slot = static_cast<int>(i);
             if (g_log && values && g_logged.insert(where + "|" + name).second) {
                 char text[160] = {};
                 int used = 0;
