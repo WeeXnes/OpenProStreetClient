@@ -13,6 +13,7 @@
 #include <sstream>
 
 #include "net/secure_client.h"
+#include "game/atmosphere.h"
 #include "game/car_lock.h"
 #include "game/overlay.h"
 #include "game/quick_match.h"
@@ -121,6 +122,22 @@ namespace ServerLink
         // Sent on joining a room: the race day's allowed cars, or nothing for every car.
         if (xml.find("<method> allowedCars") != std::string::npos) {
             CarLock::SetAllowedCars(ParamValue(xml, "cars"));
+        }
+        // Who is in the room and which car each picked: "name|car" a player, car empty while picking.
+        if (xml.find("<method> lobbyCars") != std::string::npos) {
+            std::vector<std::pair<std::string, std::string> > cars;
+            const int count = atoi(ParamValue(xml, "cars").c_str());
+            for (int i = 0; i < count && i < 8; ++i) {
+                const std::string packed = ParamValue(xml, "c" + std::to_string(i));
+                const size_t bar = packed.find('|');
+                if (bar == std::string::npos) continue;
+                cars.push_back(std::make_pair(packed.substr(0, bar), packed.substr(bar + 1)));
+            }
+            Overlay::SetLobbyCars(cars);
+        }
+        // Sent on joining and leaving a room: the race day's time of day, or nothing for the player's own.
+        if (xml.find("<method> atmosphere") != std::string::npos) {
+            Atmosphere::SetFromRoom(ParamValue(xml, "look"));
         }
         // During a quick match: the race day the server picked or prepared, or nothing yet.
         if (xml.find("<method> quickMatchRoom") != std::string::npos) {

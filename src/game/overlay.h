@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 // An information overlay drawn over the game, in the style of OpenProStreet's website: a card with
@@ -32,6 +33,9 @@ namespace Overlay
     // From the server.
     void SetStanding(const std::string& trackKey, const std::string& raceMode, const std::vector<Board>& boards);
     void PushNotice(const std::string& kind, const std::string& title, const std::vector<std::string>& lines);
+    // Who is in the room and the car each picked (empty while picking), shown while not racing. An
+    // empty list hides the card.
+    void SetLobbyCars(const std::vector<std::pair<std::string, std::string> >& cars);
 
     // The encrypted connection to the server is up, which happens on logging in from the main menu.
     // Shows a short notice, so it's clear the overlay works before the first race.

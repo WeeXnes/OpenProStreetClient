@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 // Day, dusk and night, as far as the game allows. ProStreet's lighting is baked into its tracks, and the
 // PC game ships day versions only (the engine would load a "_Sunset" copy of each track for time of day
@@ -25,4 +26,9 @@ namespace Atmosphere
     // The look right now, and a way to change it, such as from a race day's settings later on.
     Preset Current();
     void Set(Preset preset, bool announce);
+
+    // From the server on joining a room: a race day's "day", "dusk" or "night", which replaces the
+    // player's own look while they're in it. "" on leaving gives the player's own look back. F8 still
+    // works in the room, for that player only.
+    void SetFromRoom(const std::string& look);
 }

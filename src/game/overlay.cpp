@@ -45,6 +45,9 @@ namespace Overlay
 
     static CRITICAL_SECTION g_lock;
     static bool g_racing = false;
+    // Who is in the room and the car each picked, from the server. Shown while not racing.
+    static std::vector<std::pair<std::string, std::string> > g_lobbyCars;
+    static bool g_lobbyCarsShown = true;
     static std::string g_trackKey, g_trackName, g_raceMode;
     static std::string g_requestedTrack, g_requestedMode;
     static std::string g_standingTrack, g_standingMode;
@@ -336,6 +339,41 @@ namespace Overlay
         ImGui::End();
     }
 
+    // Who is in the room and which car each has picked, in the standing card's corner while not racing.
+    static void DrawLobby(const std::vector<std::pair<std::string, std::string> >& cars, float s)
+    {
+        const ImVec2 display = ImGui::GetIO().DisplaySize;
+        const float margin = 24.0f * s;
+        const bool right = g_corner == TopRight || g_corner == BottomRight;
+        const bool bottom = g_corner == BottomLeft || g_corner == BottomRight;
+        ImGui::SetNextWindowPos(ImVec2(right ? display.x - margin : margin, bottom ? display.y - margin : margin), ImGuiCond_Always,
+                                ImVec2(right ? 1.0f : 0.0f, bottom ? 1.0f : 0.0f));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(300.0f * s, 0.0f), ImVec2(460.0f * s, display.y));
+        if (!ImGui::Begin("##lobby", nullptr, PanelFlags)) { ImGui::End(); return; }
+        ImGui::PushFont(g_fontBody);
+        ImGui::TextColored(Text1, "In this room");
+        ImGui::PopFont();
+        ImGui::Dummy(ImVec2(0.0f, 4.0f * s));
+        if (ImGui::BeginTable("##lobbycars", 2, ImGuiTableFlags_SizingFixedFit))
+        {
+            ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthFixed, 140.0f * s);
+            ImGui::TableSetupColumn("car", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::PushFont(g_fontSmall);
+            for (const auto& entry : cars)
+            {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextColored(Text1, "%s", entry.first.c_str());
+                ImGui::TableSetColumnIndex(1);
+                if (entry.second.empty()) ImGui::TextColored(Text3, "Picking a car");
+                else ImGui::TextColored(Text2, "%s", entry.second.c_str());
+            }
+            ImGui::PopFont();
+            ImGui::EndTable();
+        }
+        ImGui::End();
+    }
+
     static ImVec4 NoticeColour(const std::string& kind)
     {
         return kind == "record" ? Gold : kind == "best" ? Success : kind == "not_counted" ? Warning : Text2;
@@ -393,14 +431,17 @@ namespace Overlay
         if (!g_ready) return;
 
         // Copy what to show, so the other threads aren't held up while drawing.
-        bool showStanding;
+        bool showStanding, showLobby;
         std::string trackName, mode;
         std::vector<Board> boards;
         std::vector<Notice> notices;
+        std::vector<std::pair<std::string, std::string> > lobby;
         const double now = Now();
         {
             Guard guard;
             showStanding = g_racing && !g_standingTrack.empty() && g_standingTrack == g_trackKey && g_standingMode == g_raceMode;
+            showLobby = g_lobbyCarsShown && !g_racing && !g_lobbyCars.empty();
+            if (showLobby) lobby = g_lobbyCars;
             trackName = g_trackName.empty() ? g_trackKey : g_trackName;
             mode = g_raceMode;
             boards = g_boards;
@@ -412,7 +453,7 @@ namespace Overlay
                 notices.push_back(g_noticeQueue[i]);
             }
         }
-        if (!showStanding && notices.empty() && !g_test) return;
+        if (!showStanding && !showLobby && notices.empty() && !g_test) return;
         if (!g_drawnOnce)
         {
             g_drawnOnce = true;
@@ -438,6 +479,7 @@ namespace Overlay
         ImGui_ImplDX9_NewFrame();
         ImGui::NewFrame();
         if (showStanding) DrawStanding(trackName, mode, boards, s);
+        if (showLobby) DrawLobby(lobby, s);
         if (g_notices) DrawNotices(notices, now, s);
         if (g_test)
         {
@@ -534,6 +576,7 @@ namespace Overlay
             g_enabled = GetPrivateProfileIntA("Overlay", "Enabled", 1, settings.c_str()) != 0;
             g_notices = GetPrivateProfileIntA("Overlay", "Notifications", 1, settings.c_str()) != 0;
             g_test = GetPrivateProfileIntA("Overlay", "Test", 0, settings.c_str()) != 0;
+            g_lobbyCarsShown = GetPrivateProfileIntA("Overlay", "LobbyCars", 1, settings.c_str()) != 0;
             char corner[32] = {};
             GetPrivateProfileStringA("Overlay", "Position", "TopRight", corner, sizeof(corner), settings.c_str());
             if (_stricmp(corner, "TopLeft") == 0) g_corner = TopLeft;
@@ -582,6 +625,12 @@ namespace Overlay
             }
         }
         if (ask) ServerLink::RequestStanding(rawTrack, raceMode, VaultFixes::SpeedLimit());
+    }
+
+    void SetLobbyCars(const std::vector<std::pair<std::string, std::string> >& cars)
+    {
+        Guard guard;
+        g_lobbyCars = cars;
     }
 
     void SetStanding(const std::string& trackKey, const std::string& raceMode, const std::vector<Board>& boards)

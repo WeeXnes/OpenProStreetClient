@@ -504,6 +504,28 @@ namespace Atmosphere
         Overlay::PushNotice("result", PRESET_NAMES[preset], lines);
     }
 
+    // The player's own look while a room sets one, else -1.
+    static std::atomic<int> g_ownPreset(-1);
+
+    void SetFromRoom(const std::string& look)
+    {
+        int preset = -1;
+        for (int i = Day; i <= Night; ++i)
+            if (_stricmp(look.c_str(), PRESET_NAMES[i]) == 0) preset = i;
+        if (preset < 0) {
+            const int own = g_ownPreset.exchange(-1);
+            if (own >= 0 && own != g_preset.load()) Set(static_cast<Preset>(own), true);
+            return;
+        }
+        if (g_ownPreset.load() < 0) g_ownPreset.store(g_preset.load());
+        if (preset == g_preset.load()) return;
+        Set(static_cast<Preset>(preset), false);
+        std::vector<std::string> lines;
+        lines.push_back(preset == Day ? "This race day is set in the day." : preset == Dusk ? "This race day is set at dusk." : "This race day is set at night.");
+        lines.push_back("Its sky shows from the next race.");
+        Overlay::PushNotice("result", PRESET_NAMES[preset], lines);
+    }
+
     void Init(uintptr_t)
     {
         InitializeCriticalSection(&g_lock);

@@ -136,6 +136,7 @@ Notifications=1
 Position=TopRight   ; TopLeft, TopRight, BottomLeft or BottomRight
 Scale=100           ; percent, 50 to 200
 Test=0              ; 1 always shows a small panel bottom left, to check the overlay reaches the screen
+LobbyCars=1         ; in a room, outside races, a card with everyone in it and the car they picked
 ```
 
 ### Day and night
