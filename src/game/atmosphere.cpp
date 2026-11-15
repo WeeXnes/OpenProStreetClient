@@ -438,50 +438,28 @@ namespace Atmosphere
     // calls it from 0x7765F7 with the track's attribute 0x295014E6 and a float kept at 0xAEB744.
     typedef void (__cdecl *SetSkyStyleFn)(int style, int envmap, float value);
     static const uintptr_t SET_SKY_STYLE = 0x76A670;
-    static int* const   SKY_STYLE = reinterpret_cast<int*>(0xA79F9C);
-    static int* const   SKY_ENVMAP = reinterpret_cast<int*>(0xA79FA0);
-    static float* const SKY_VALUE = reinterpret_cast<float*>(0xAEB744);
-    static const int    SKY_STYLES = 15;
+    static const int       SKY_STYLES = 15;
 
     static SetSkyStyleFn g_realSetSkyStyle = nullptr;
-    static bool  g_gameSkyKnown = false;
-    static int   g_gameSkyStyle = 0, g_gameSkyEnvmap = 0;
-    static float g_gameSkyValue = 0.0f;
     static std::atomic<int> g_skyOverride(0); // 0: the track's own sky
-    static int   g_skyApplied = 0;
     static int   g_skyKey = VK_F9;
     static int   g_presetSky[3] = {0, 0, 0};
 
-    // The game asks for its track's sky: a chosen style replaces it.
+    // The game asks for its track's sky as it loads: a chosen style replaces it.
     static void __cdecl SetSkyStyleHook(int style, int envmap, float value)
     {
-        g_gameSkyKnown = true;
-        g_gameSkyStyle = style;
-        g_gameSkyEnvmap = envmap;
-        g_gameSkyValue = value;
         const int sky = g_skyOverride.load();
-        g_skyApplied = sky;
-        if (sky > 0) g_realSetSkyStyle(sky, sky, value);
-        else g_realSetSkyStyle(style, envmap, value);
-    }
-
-    // On the game's thread, once a frame: switches the sky when the chosen style changed.
-    static void ApplySky()
-    {
-        const int sky = g_skyOverride.load();
-        if (!g_realSetSkyStyle || sky == g_skyApplied) return;
-        if (!g_gameSkyKnown) {
-            g_gameSkyKnown = true;
-            g_gameSkyStyle = *SKY_STYLE;
-            g_gameSkyEnvmap = *SKY_ENVMAP;
-            g_gameSkyValue = *SKY_VALUE;
+        if (sky > 0) {
+            Log::Event(Log::Tag::Client, "Atmosphere: sky style %d instead of the track's %d\n", sky, style);
+            g_realSetSkyStyle(sky, sky, value);
+        } else {
+            g_realSetSkyStyle(style, envmap, value);
         }
-        g_skyApplied = sky;
-        if (sky > 0) g_realSetSkyStyle(sky, sky, g_gameSkyValue);
-        else g_realSetSkyStyle(g_gameSkyStyle, g_gameSkyEnvmap, g_gameSkyValue);
-        Log::Event(Log::Tag::Client, "Atmosphere: sky style %d%s\n", sky > 0 ? sky : g_gameSkyStyle, sky > 0 ? "" : " (the track's own)");
     }
 
+    // The sky only changes when the game switches it itself, as a track loads. Calling the switch from
+    // a frame crashed the game (client 10.5 test build 167): it frees the sky textures while they're in
+    // use, and the game only ever calls it during a load.
     static void SetSky(int sky, bool announce)
     {
         g_skyOverride.store(sky);
@@ -489,7 +467,7 @@ namespace Atmosphere
         char title[32];
         snprintf(title, sizeof(title), sky > 0 ? "Sky style %d" : "The track's own sky", sky);
         std::vector<std::string> lines;
-        lines.push_back("One of the game's 15 skies. The next key press shows another.");
+        lines.push_back("One of the game's 15 skies. It shows from the next race.");
         Overlay::PushNotice("result", title, lines);
     }
 
@@ -503,7 +481,6 @@ namespace Atmosphere
         const bool skyDown = focus && g_realSetSkyStyle && (GetAsyncKeyState(g_skyKey) & 0x8000) != 0;
         if (skyDown && !skyWasDown) SetSky((g_skyOverride.load() + 1) % (SKY_STYLES + 1), true);
         skyWasDown = skyDown;
-        ApplySky();
     }
 
     Preset Current()
