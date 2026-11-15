@@ -119,10 +119,10 @@ namespace Atmosphere
     // own: cmLocalColourMatrix holds their colours, a row each, and cvLightColour and cvSpecularColour
     // light its paint.
     static const Default DEFAULTS[] = {
-        {"cvWorldSunColour",         {1.00f, 0.62f, 0.40f, 1.0f}, {0.16f, 0.20f, 0.36f, 1.0f}},
-        {"cvInstanceWorldSunColour", {1.00f, 0.62f, 0.40f, 1.0f}, {0.16f, 0.20f, 0.36f, 1.0f}},
-        {"cvWorldAmbientColour",     {0.80f, 0.66f, 0.62f, 1.0f}, {0.30f, 0.34f, 0.50f, 1.0f}},
-        {"cvAmbientColour",          {0.80f, 0.66f, 0.62f, 1.0f}, {0.30f, 0.34f, 0.50f, 1.0f}},
+        {"cvWorldSunColour",         {1.00f, 0.62f, 0.40f, 1.0f}, {0.09f, 0.12f, 0.24f, 1.0f}},
+        {"cvInstanceWorldSunColour", {1.00f, 0.62f, 0.40f, 1.0f}, {0.09f, 0.12f, 0.24f, 1.0f}},
+        {"cvWorldAmbientColour",     {0.80f, 0.66f, 0.62f, 1.0f}, {0.20f, 0.24f, 0.38f, 1.0f}},
+        {"cvAmbientColour",          {0.80f, 0.66f, 0.62f, 1.0f}, {0.20f, 0.24f, 0.38f, 1.0f}},
         {"cvFogColour",              {0.95f, 0.60f, 0.45f, 1.0f}, {0.12f, 0.14f, 0.24f, 1.0f}},
         {"FogColor",                 {0.95f, 0.60f, 0.45f, 1.0f}, {0.12f, 0.14f, 0.24f, 1.0f}},
         {"FFSKYCOLOR",               {0.95f, 0.62f, 0.48f, 1.0f}, {0.15f, 0.18f, 0.30f, 1.0f}},
@@ -161,7 +161,7 @@ namespace Atmosphere
         const DWORD length = GetPrivateProfileSectionA(section.c_str(), buffer, sizeof(buffer), settings.c_str());
         for (const char* line = buffer; line < buffer + length && *line; line += strlen(line) + 1) {
             const char* equals = strchr(line, '=');
-            if (!equals || equals == line) continue;
+            if (!equals || equals == line || _strnicmp(line, "SkyStyle=", 9) == 0) continue;
             std::string name(line, equals - line);
             while (!name.empty() && name.back() == ' ') name.pop_back();
             float value[4] = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -176,13 +176,13 @@ namespace Atmosphere
         }
     }
 
-    static int ParseKey(const char* text)
+    static int ParseKey(const char* text, int fallback)
     {
         if ((text[0] == 'F' || text[0] == 'f') && text[1]) {
             const int number = atoi(text + 1);
             if (number >= 1 && number <= 12) return VK_F1 + number - 1;
         }
-        return VK_F8;
+        return fallback;
     }
 
     // ---- The effect hooks ----
@@ -357,12 +357,43 @@ namespace Atmosphere
         return result;
     }
 
+    // nfs.exe keeps its compiled effects as RCDATA resources named like IDI_SKY_FX, and may hand their
+    // bytes to D3DXCreateEffect itself. An effect made from memory is named after the resource its bytes
+    // came from.
+    struct EffectResource
+    {
+        std::string name;
+        const void* data;
+        DWORD       size;
+    };
+    static std::vector<EffectResource> g_resources;
+
+    static BOOL CALLBACK OnResource(HMODULE module, LPCSTR type, LPSTR name, LONG_PTR)
+    {
+        if (IS_INTRESOURCE(name)) return TRUE;
+        HRSRC found = FindResourceA(module, name, type);
+        HGLOBAL loaded = found ? LoadResource(module, found) : nullptr;
+        const void* data = loaded ? LockResource(loaded) : nullptr;
+        if (data) g_resources.push_back({name, data, SizeofResource(module, found)});
+        return TRUE;
+    }
+
+    static std::string NameFromData(const void* data, size_t size)
+    {
+        for (const EffectResource& resource : g_resources)
+            if (resource.data == data) return resource.name;
+        // The game may have copied the bytes first.
+        for (const EffectResource& resource : g_resources)
+            if (resource.size == size && data && memcmp(resource.data, data, size) == 0) return resource.name;
+        return "an effect from memory";
+    }
+
     static HRESULT WINAPI CreateHook(void* a, void* b, void* c, void* d, void* e, DWORD flags, void* pool, void** effect, void** errors)
     {
         const HRESULT result = g_realCreate(a, b, c, d, e, flags, pool, effect, errors);
         if (SUCCEEDED(result) && effect && *effect) {
             HookEffect(*effect);
-            NameEffect(*effect, "an effect from memory");
+            NameEffect(*effect, NameFromData(b, reinterpret_cast<uintptr_t>(c)));
         }
         return result;
     }
@@ -372,7 +403,7 @@ namespace Atmosphere
         const HRESULT result = g_realCreateEx(a, b, c, d, e, skip, flags, pool, effect, errors);
         if (SUCCEEDED(result) && effect && *effect) {
             HookEffect(*effect);
-            NameEffect(*effect, "an effect from memory");
+            NameEffect(*effect, NameFromData(b, reinterpret_cast<uintptr_t>(c)));
         }
         return result;
     }
@@ -398,12 +429,81 @@ namespace Atmosphere
         return process == GetCurrentProcessId();
     }
 
+    // ---- The sky's texture set ----
+    //
+    // Each track names one of 15 sky styles, SKY_STYLE_01 to SKY_STYLE_15 (listed in
+    // GLOBAL\DYNTEX_timestamp.moo). Track models use SKY_STYLE1_LAYER1 to 4 and an envmap, and 0x754700
+    // remaps those to SKY_STYLE_<style>_LAYERn. 0x76A670 switches style at any time: it stores the style
+    // at 0xA79F9C and the envmap's at 0xA79FA0, rebuilds the remap and streams the textures in. The game
+    // calls it from 0x7765F7 with the track's attribute 0x295014E6 and a float kept at 0xAEB744.
+    typedef void (__cdecl *SetSkyStyleFn)(int style, int envmap, float value);
+    static const uintptr_t SET_SKY_STYLE = 0x76A670;
+    static int* const   SKY_STYLE = reinterpret_cast<int*>(0xA79F9C);
+    static int* const   SKY_ENVMAP = reinterpret_cast<int*>(0xA79FA0);
+    static float* const SKY_VALUE = reinterpret_cast<float*>(0xAEB744);
+    static const int    SKY_STYLES = 15;
+
+    static SetSkyStyleFn g_realSetSkyStyle = nullptr;
+    static bool  g_gameSkyKnown = false;
+    static int   g_gameSkyStyle = 0, g_gameSkyEnvmap = 0;
+    static float g_gameSkyValue = 0.0f;
+    static std::atomic<int> g_skyOverride(0); // 0: the track's own sky
+    static int   g_skyApplied = 0;
+    static int   g_skyKey = VK_F9;
+    static int   g_presetSky[3] = {0, 0, 0};
+
+    // The game asks for its track's sky: a chosen style replaces it.
+    static void __cdecl SetSkyStyleHook(int style, int envmap, float value)
+    {
+        g_gameSkyKnown = true;
+        g_gameSkyStyle = style;
+        g_gameSkyEnvmap = envmap;
+        g_gameSkyValue = value;
+        const int sky = g_skyOverride.load();
+        g_skyApplied = sky;
+        if (sky > 0) g_realSetSkyStyle(sky, sky, value);
+        else g_realSetSkyStyle(style, envmap, value);
+    }
+
+    // On the game's thread, once a frame: switches the sky when the chosen style changed.
+    static void ApplySky()
+    {
+        const int sky = g_skyOverride.load();
+        if (!g_realSetSkyStyle || sky == g_skyApplied) return;
+        if (!g_gameSkyKnown) {
+            g_gameSkyKnown = true;
+            g_gameSkyStyle = *SKY_STYLE;
+            g_gameSkyEnvmap = *SKY_ENVMAP;
+            g_gameSkyValue = *SKY_VALUE;
+        }
+        g_skyApplied = sky;
+        if (sky > 0) g_realSetSkyStyle(sky, sky, g_gameSkyValue);
+        else g_realSetSkyStyle(g_gameSkyStyle, g_gameSkyEnvmap, g_gameSkyValue);
+        Log::Event(Log::Tag::Client, "Atmosphere: sky style %d%s\n", sky > 0 ? sky : g_gameSkyStyle, sky > 0 ? "" : " (the track's own)");
+    }
+
+    static void SetSky(int sky, bool announce)
+    {
+        g_skyOverride.store(sky);
+        if (!announce) return;
+        char title[32];
+        snprintf(title, sizeof(title), sky > 0 ? "Sky style %d" : "The track's own sky", sky);
+        std::vector<std::string> lines;
+        lines.push_back("One of the game's 15 skies. The next key press shows another.");
+        Overlay::PushNotice("result", title, lines);
+    }
+
     static void BeforePresent(IDirect3DDevice9*, IDirect3DSwapChain9*)
     {
-        static bool wasDown = false;
-        const bool down = (GetAsyncKeyState(g_key) & 0x8000) != 0 && GameHasFocus();
+        static bool wasDown = false, skyWasDown = false;
+        const bool focus = GameHasFocus();
+        const bool down = focus && (GetAsyncKeyState(g_key) & 0x8000) != 0;
         if (down && !wasDown) Set(static_cast<Preset>((g_preset.load() + 1) % 3), true);
         wasDown = down;
+        const bool skyDown = focus && g_realSetSkyStyle && (GetAsyncKeyState(g_skyKey) & 0x8000) != 0;
+        if (skyDown && !skyWasDown) SetSky((g_skyOverride.load() + 1) % (SKY_STYLES + 1), true);
+        skyWasDown = skyDown;
+        ApplySky();
     }
 
     Preset Current()
@@ -415,6 +515,7 @@ namespace Atmosphere
     {
         if (preset < Day || preset > Night) return;
         g_preset.store(preset);
+        g_skyOverride.store(g_presetSky[preset]);
         Log::Event(Log::Tag::Client, "Atmosphere: %s\n", PRESET_NAMES[preset]);
         if (!announce) return;
         std::vector<std::string> lines;
@@ -426,6 +527,8 @@ namespace Atmosphere
     void Init(uintptr_t)
     {
         InitializeCriticalSection(&g_lock);
+        EnumResourceNamesA(GetModuleHandleA(nullptr), MAKEINTRESOURCEA(10), OnResource, 0); // RT_RCDATA
+        Log::Debug("[OpenProStreet] Atmosphere: %u effect resource(s) in nfs.exe\n", static_cast<unsigned>(g_resources.size()));
         const std::string& settings = Log::SettingsPath();
         for (const Default& entry : DEFAULTS) {
             SetTint(Dusk, entry.name, entry.dusk);
@@ -436,14 +539,33 @@ namespace Atmosphere
             g_log = GetPrivateProfileIntA("Atmosphere", "Log", 0, settings.c_str()) != 0;
             char text[32] = {};
             GetPrivateProfileStringA("Atmosphere", "Key", "F8", text, sizeof(text), settings.c_str());
-            g_key = ParseKey(text);
+            g_key = ParseKey(text, VK_F8);
+            GetPrivateProfileStringA("Atmosphere", "SkyKey", "F9", text, sizeof(text), settings.c_str());
+            g_skyKey = ParseKey(text, VK_F9);
             GetPrivateProfileStringA("Atmosphere", "Start", "Day", text, sizeof(text), settings.c_str());
             for (int preset = Day; preset <= Night; ++preset)
                 if (_stricmp(text, PRESET_NAMES[preset]) == 0) g_preset.store(preset);
             ReadPresetSection(Dusk, settings);
             ReadPresetSection(Night, settings);
+            // SkyStyle=1 to 15 swaps in that sky for the look. 0 keeps the track's own.
+            for (int preset = Dusk; preset <= Night; ++preset) {
+                const std::string section = std::string("Atmosphere.") + PRESET_NAMES[preset];
+                const int sky = GetPrivateProfileIntA(section.c_str(), "SkyStyle", 0, settings.c_str());
+                g_presetSky[preset] = sky >= 0 && sky <= SKY_STYLES ? sky : 0;
+            }
         }
         if (!g_enabled) return;
+
+        // The game's own sky switch, so a chosen style also replaces the track's when a track loads.
+        const MH_STATUS minhook = MH_Initialize();
+        if ((minhook != MH_OK && minhook != MH_ERROR_ALREADY_INITIALIZED) ||
+            MH_CreateHook(reinterpret_cast<void*>(SET_SKY_STYLE), reinterpret_cast<void*>(SetSkyStyleHook),
+                          reinterpret_cast<void**>(&g_realSetSkyStyle)) != MH_OK ||
+            MH_EnableHook(reinterpret_cast<void*>(SET_SKY_STYLE)) != MH_OK) {
+            g_realSetSkyStyle = nullptr;
+            Log::Warn("Couldn't hook the game's sky switch, so the sky style can't change.\n");
+        }
+        g_skyOverride.store(g_presetSky[g_preset.load()]);
 
         HMODULE d3dx = GetModuleHandleA("d3dx9_34.dll");
         if (!d3dx) d3dx = LoadLibraryA("d3dx9_34.dll");

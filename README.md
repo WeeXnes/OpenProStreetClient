@@ -154,8 +154,8 @@ Each look can be tuned, one line per shader parameter. Three or four numbers mul
 
 ```ini
 [Atmosphere.Night]
-cvWorldSunColour=0.16,0.2,0.36
-cvWorldAmbientColour=0.3,0.34,0.5
+cvWorldSunColour=0.09,0.12,0.24
+cvWorldAmbientColour=0.2,0.24,0.38
 cvFogColour=0.12,0.14,0.24
 FFSKYCOLOR=0.15,0.18,0.3
 cfBrightness=0.55
