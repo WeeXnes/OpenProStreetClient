@@ -140,14 +140,20 @@ Test=0              ; 1 always shows a small panel bottom left, to check the ove
 
 ### Day and night
 
-ProStreet only has day lighting on PC. Its own time of day switch loads a pre-lit `_Sunset` copy of each track, which only other platforms have. The plugin changes the light the game hands its shaders every frame instead: the sun, ambient, fog and sky colours and the overall brightness. **F8** switches between the game's own day, a low warm dusk and a dim blue night. Shadows stay where the day's sun baked them, and there are no street lights, so night looks like a darkened day.
+ProStreet only has day lighting on PC. Its own time of day switch loads a pre-lit `_Sunset` copy of each track, which only other platforms have. The plugin changes the light the game hands its shaders every frame instead: the sun, ambient, fog and sky colours and the overall brightness. **F8** switches between the game's own day, a low warm dusk and a dim blue night. Shadows stay where the day's sun baked them, and there are no street lights.
+
+The game also ships 15 skies, `SKY_STYLE_01` to `SKY_STYLE_15`, and each track picks one. Dusk swaps in style 11, a sunset with warm clouds, and night style 15, a starry sky. A sky only changes as a track loads, as the game itself does, so a new look's sky shows from the next race. **F9** steps through the 15 skies the same way, to try them.
 
 ```ini
 [Atmosphere]
 Enabled=1
 Start=Day   ; Day, Dusk or Night
 Key=F8      ; F1 to F12
+SkyKey=F9   ; F1 to F12
 Log=0       ; 1 lists every lighting value the game sets, once each, in the detailed log
+
+[Atmosphere.Night]
+SkyStyle=15 ; 1 to 15, or 0 for the track's own sky
 ```
 
 Each look can be tuned, one line per shader parameter. Three or four numbers multiply its x, y, z (and w), one number multiplies them all, and an empty value turns a default off:

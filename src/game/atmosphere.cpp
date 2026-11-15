@@ -133,7 +133,8 @@ namespace Atmosphere
         {"cfBrightness",             {0.85f, 1.00f, 1.00f, 1.0f}, {0.55f, 1.00f, 1.00f, 1.0f}},
         // The sky (fx\sky.efx) is its texture brightened by its alpha, times cvVertexPowerBrightness.y,
         // then tone-mapped as c / (c + 1). Only y matters there.
-        {"IDI_SKY_FX:cvVertexPowerBrightness", {1.00f, 0.70f, 1.00f, 1.0f}, {1.00f, 0.07f, 1.00f, 1.0f}},
+        // The dusk and night skies (styles 11 and 15) are already dark, so this only takes the edge off.
+        {"IDI_SKY_FX:cvVertexPowerBrightness", {1.00f, 0.90f, 1.00f, 1.0f}, {1.00f, 0.60f, 1.00f, 1.0f}},
     };
 
     static int NameIndex(const std::string& name)
@@ -443,7 +444,9 @@ namespace Atmosphere
     static SetSkyStyleFn g_realSetSkyStyle = nullptr;
     static std::atomic<int> g_skyOverride(0); // 0: the track's own sky
     static int   g_skyKey = VK_F9;
-    static int   g_presetSky[3] = {0, 0, 0};
+    // Picked in the game (client 10.5 tests): style 11 is a sunset sky with warm clouds, style 15 a
+    // starry night.
+    static int   g_presetSky[3] = {0, 11, 15};
 
     // The game asks for its track's sky as it loads: a chosen style replaces it.
     static void __cdecl SetSkyStyleHook(int style, int envmap, float value)
@@ -527,7 +530,7 @@ namespace Atmosphere
             // SkyStyle=1 to 15 swaps in that sky for the look. 0 keeps the track's own.
             for (int preset = Dusk; preset <= Night; ++preset) {
                 const std::string section = std::string("Atmosphere.") + PRESET_NAMES[preset];
-                const int sky = GetPrivateProfileIntA(section.c_str(), "SkyStyle", 0, settings.c_str());
+                const int sky = GetPrivateProfileIntA(section.c_str(), "SkyStyle", g_presetSky[preset], settings.c_str());
                 g_presetSky[preset] = sky >= 0 && sky <= SKY_STYLES ? sky : 0;
             }
         }
