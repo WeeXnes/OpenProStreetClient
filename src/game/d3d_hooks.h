@@ -28,7 +28,7 @@ namespace D3DHooks
     // the game starts Direct3D. Safe to call more than once.
     bool Install();
 
-    // Up to four listeners.
+    // Up to eight listeners.
     void AddListener(const Listener& listener);
 
     // Which file a function is in, such as Windows' d3d9.dll or DXVK's.

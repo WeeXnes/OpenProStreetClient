@@ -26,7 +26,7 @@ namespace D3DHooks
     static EndSceneFn g_realEndScene = nullptr;
     static ChainPresentFn g_realChainPresent = nullptr;
 
-    static Listener g_listeners[4];
+    static Listener g_listeners[8];
     static int g_listenerCount = 0;
     static bool g_installed = false;
     // Drawing calls EndScene and may present through the swap chain itself: those aren't the game's.
@@ -158,6 +158,6 @@ namespace D3DHooks
 
     void AddListener(const Listener& listener)
     {
-        if (g_listenerCount < 4) g_listeners[g_listenerCount++] = listener;
+        if (g_listenerCount < 8) g_listeners[g_listenerCount++] = listener;
     }
 }

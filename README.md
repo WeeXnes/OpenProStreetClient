@@ -171,6 +171,27 @@ cfBrightness=0.55
 
 The defaults also tint `cvInstanceWorldSunColour`, `cvAmbientColour`, `FogColor` and `cfBloomScale`, and the car's own light: `cmLocalColourMatrix` (a colour per row), `cvLightColour` and `cvSpecularColour`. A rule written `EFFECT:parameter` applies in that effect only, and wins over one for the parameter everywhere. The sky darkens that way: `IDI_SKY_FX:cvVertexPowerBrightness=1,0.07,1,1`, as the sky's shader only uses its y, as brightness. `[Atmosphere.Dusk]` works the same way. With `Log=1`, the detailed log names each parameter, the effect it belongs to and the value the game first sets, and marks the ones a look changes. The game sets nearly all of them with `ID3DXEffect::SetRawValue`.
 
+### Graphics and shaders
+
+The client sharpens textures at distance with up to 16× anisotropic filtering on linear samplers, and can swap the game's Direct3D 9 shaders at load time without editing `nfs.exe`. Replacement `.cso` shaders live in `scripts/OpenProStreetShaders/` and are named `<anything>-<16-hex-id>.cso`, matched by FNV-1a hash of the game's bytecode (listed by ProStreetOnline's `shaders/tools/split-shaders.js`):
+
+```ini
+[Graphics]
+Anisotropy=16 ; 2 to 16; 0 leaves the game's filtering alone
+Shaders=1     ; 0 ignores scripts/OpenProStreetShaders
+Log=0         ; 1 lists each shader the game creates with its id, once, in the detailed log
+```
+
+### Texture packs
+
+TexMod packs unpacked into `scripts/OpenProStreetTextures/<pack>/<8-hex-id>.dds` (for example by OpenProStreet Launcher) are swapped in automatically as textures load, without needing TexMod:
+
+```ini
+[Textures]
+Enabled=1     ; 0 turns texture packs off
+Log=0         ; 1 lists each loaded texture id, once, in the detailed log
+```
+
 ### Display test
 
 A test for working on an overlay, not for playing. Add this to `scripts/OpenProStreetClient.ini`:

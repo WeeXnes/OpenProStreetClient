@@ -37,6 +37,7 @@ set(CLIENT_SOURCES
     src/game/hooks.cpp
     src/game/input_focus.cpp
     src/game/event_vote.cpp
+    src/game/graphics.cpp
     src/game/lan_menu.cpp
     src/game/lanfix.cpp
     src/game/map.cpp
@@ -45,6 +46,7 @@ set(CLIENT_SOURCES
     src/game/race_mode.cpp
     src/game/race_results.cpp
     src/game/vault_fixes.cpp
+    src/game/textures.cpp
     src/game/tweaks.cpp
     src/net/secure_client.cpp
     src/net/server_link.cpp
