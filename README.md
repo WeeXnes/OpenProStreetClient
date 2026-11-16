@@ -173,11 +173,11 @@ The defaults also tint `cvInstanceWorldSunColour`, `cvAmbientColour`, `FogColor`
 
 ### Graphics and shaders
 
-The client sharpens textures at distance with up to 16× anisotropic filtering on linear samplers, and can swap the game's Direct3D 9 shaders at load time without editing `nfs.exe`. Replacement `.cso` shaders live in `scripts/OpenProStreetShaders/` and are named `<anything>-<16-hex-id>.cso`, matched by FNV-1a hash of the game's bytecode (listed by ProStreetOnline's `shaders/tools/split-shaders.js`):
+The client can sharpen textures at distance with up to 16× anisotropic filtering on linear samplers (off unless you turn it on), and can swap the game's Direct3D 9 shaders at load time without editing `nfs.exe`. Replacement `.cso` shaders live in `scripts/OpenProStreetShaders/` and are named `<anything>-<16-hex-id>.cso`, matched by FNV-1a hash of the game's bytecode (listed by ProStreetOnline's `shaders/tools/split-shaders.js`):
 
 ```ini
 [Graphics]
-Anisotropy=16 ; 2 to 16; 0 leaves the game's filtering alone
+Anisotropy=16 ; off by default; 2 to 16 turns it on, 0 leaves the game's filtering alone
 Shaders=1     ; 0 ignores scripts/OpenProStreetShaders
 Log=0         ; 1 lists each shader the game creates with its id, once, in the detailed log
 ```
@@ -198,7 +198,7 @@ In non-drag races with Automatic transmission enabled, the direction of the cont
 
 ```ini
 [Camera]
-RightStickOrbit=1    ; 0 turns right-stick orbit off and restores manual shift override
+RightStickOrbit=1    ; off by default, 1 turns it on (and replaces the right-stick manual shift override)
 OrbitBlockShift=1    ; 1 disables right-stick manual shift override while active
 OrbitDeadzone=30     ; how far the stick must be pushed before the camera moves, in percent (5 to 90)
 OrbitSnapTime=50     ; milliseconds to reach a new angle (0 = instant)

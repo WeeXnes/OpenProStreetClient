@@ -33,7 +33,7 @@ namespace Graphics
     static CreateVertexShaderFn g_realCreateVertexShader = nullptr;
     static CreatePixelShaderFn g_realCreatePixelShader = nullptr;
 
-    static DWORD g_anisotropy = 16;
+    static DWORD g_anisotropy = 0; // off unless [Graphics] Anisotropy asks for it
     static bool g_shaders = true;
     static bool g_log = false;
     static bool g_hooked = false;
@@ -218,7 +218,7 @@ namespace Graphics
     {
         const std::string& settings = Log::SettingsPath();
         if (!settings.empty()) {
-            const int level = GetPrivateProfileIntA("Graphics", "Anisotropy", 16, settings.c_str());
+            const int level = GetPrivateProfileIntA("Graphics", "Anisotropy", 0, settings.c_str());
             g_anisotropy = level < 2 ? 0 : (level > 16 ? 16 : static_cast<DWORD>(level));
             g_shaders = GetPrivateProfileIntA("Graphics", "Shaders", 1, settings.c_str()) != 0;
             g_log = GetPrivateProfileIntA("Graphics", "Log", 0, settings.c_str()) != 0;

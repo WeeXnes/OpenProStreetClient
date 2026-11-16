@@ -271,7 +271,7 @@ namespace CameraOrbit
             const std::string& settings = Log::SettingsPath();
             if (settings.empty()) return;
 
-            g_cfg.enabled = GetPrivateProfileIntA("Camera", "RightStickOrbit", 1, settings.c_str()) != 0;
+            g_cfg.enabled = GetPrivateProfileIntA("Camera", "RightStickOrbit", 0, settings.c_str()) != 0;
             g_cfg.blockShift = GetPrivateProfileIntA("Camera", "OrbitBlockShift", 1, settings.c_str()) != 0;
 
             const int dzPercent = GetPrivateProfileIntA("Camera", "OrbitDeadzone", 30, settings.c_str());
@@ -295,7 +295,7 @@ namespace CameraOrbit
         LoadSettings();
 
         if (!g_cfg.enabled) {
-            Log::Event(Log::Tag::Game, "Right-stick camera orbit: off ([Camera] RightStickOrbit=0)\n");
+            Log::Event(Log::Tag::Game, "Right-stick camera orbit: off (set [Camera] RightStickOrbit=1 to turn it on)\n");
             return;
         }
 

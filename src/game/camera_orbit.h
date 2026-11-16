@@ -7,7 +7,7 @@ namespace CameraOrbit
 {
     struct Config
     {
-        bool enabled = true;
+        bool enabled = false;
         bool blockShift = true;
         float deadzone = 0.30f;         // Stick must be pushed past this before the camera moves
         float smoothTimeSec = 0.05f;    // Time to reach a new angle (0 = instant)
