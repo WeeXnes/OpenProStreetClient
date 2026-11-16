@@ -44,6 +44,7 @@ namespace ReShifted
         float redlineRPM = 8000.0f;
         float sportRPM[kMaxGears]{};   // Full-throttle upshift RPM in gear g
         float drop[kMaxGears]{};       // RPM multiplier when shifting g -> g+1 (ratio[g+1] / ratio[g])
+        float ratioToTop[kMaxGears]{}; // Scales gear g wheelRPM to top-gear equivalent RPM (road speed)
         float wheelGuardFirst = 0.0f;  // Game's wheelspin guard factor in 1st gear (0 = unknown, guard off)
         float wheelGuardOther = 0.0f;  // Same for the other gears
 
@@ -101,6 +102,10 @@ namespace ReShifted
                     allFromGame = false;
                 }
             }
+            ratioToTop[topGear] = 1.0f;
+            for (int g = topGear - 1; g >= 2; --g) {
+                ratioToTop[g] = ratioToTop[g + 1] * drop[g];
+            }
             fromGameTables = allFromGame;
             valid = true;
         }
@@ -113,15 +118,17 @@ namespace ReShifted
         // Time after a gear change in which the opposite shift is refused. The engine RPM
         // is still settling then, which is what caused the old up-then-straight-down pair.
         // Shorter when the car is being driven hard.
-        float ShiftLockSec() const
+        float ShiftLockSec(const Config& cfg) const
         {
-            return ShiftProfile::Lerp(0.80f, 0.45f, ShiftProfile::Clamp(sportiness, 0.0f, 1.0f));
+            const float hard = cfg.sportMemory ? sportiness : demand;
+            return ShiftProfile::Lerp(0.80f, 0.45f, ShiftProfile::Clamp(hard, 0.0f, 1.0f));
         }
 
         void Reset()
         {
             demand = 0.0f;
             sportiness = 0.0f;
+            speedFrac = 0.0f;
             prevGas = 0.0f;
             holdTimer = 0.0f;
             level = 0.0f;
@@ -133,6 +140,33 @@ namespace ReShifted
             lastDownshiftRPM = 0.0f;
         }
 
+        // Tracks normalized road speed (0..1 of top-gear redline speed) from wheelRPM + gear ratios,
+        // invariant to which gear the car is currently in.
+        void UpdateSpeed(const ShiftProfile& p, int gear, float wheelRPM)
+        {
+            if (!p.valid || gear < 2 || gear > p.topGear || gear >= kMaxGears || p.redlineRPM <= 1.0f) {
+                return;
+            }
+            const float topEquivRPM = (wheelRPM > 0.0f ? wheelRPM : 0.0f) * p.ratioToTop[gear];
+            speedFrac = ShiftProfile::Clamp(topEquivRPM / p.redlineRPM, 0.0f, 1.0f);
+        }
+
+        // Above ~15% of top-gear speed, holding steady speed against aero drag requires more throttle.
+        // Subtract that cruise baseline before scoring eco vs sport, while keeping full sport throttle
+        // (>= SportThrottle) at 100% sport at every speed.
+        static float CompensateThrottleForSpeed(float rawGas, float curSpeedFrac, const Config& cfg)
+        {
+            const float gas = ShiftProfile::Clamp(rawGas, 0.0f, 1.0f);
+            const float eco = ShiftProfile::Clamp(cfg.ecoThrottle, 0.0f, 0.80f);
+            const float sport = ShiftProfile::Clamp(cfg.sportThrottle, eco + 0.10f, 1.0f);
+            const float u = ShiftProfile::Clamp((curSpeedFrac - 0.15f) / 0.60f, 0.0f, 1.0f);
+            const float maxAllowance = (sport * 0.65f < 0.40f) ? (sport * 0.65f) : 0.40f;
+            const float cruiseLoad = maxAllowance * u;
+            if (gas <= cruiseLoad) return 0.0f;
+            if (gas >= sport || (sport - cruiseLoad) <= 0.05f) return gas;
+            return sport * ((gas - cruiseLoad) / (sport - cruiseLoad));
+        }
+
         // Call once per simulation step with the real throttle and brake (0..1) and the current gear.
         // Returns the gear change that just happened in gears: +1 up, -2 two gears down, 0 none.
         int Tick(float dt, int gear, float rawGas, float rawBrake, const Config& cfg)
@@ -140,12 +174,13 @@ namespace ReShifted
             if (dt <= 0.0f) return 0;
             if (dt > 0.05f) dt = 0.05f;
 
-            const float gas = ShiftProfile::Clamp(rawGas, 0.0f, 1.0f);
+            const float rawClamp = ShiftProfile::Clamp(rawGas, 0.0f, 1.0f);
+            const float gas = CompensateThrottleForSpeed(rawClamp, speedFrac, cfg);
             const float brake = ShiftProfile::Clamp(rawBrake, 0.0f, 1.0f);
-            const float dGasDt = (gas - prevGas) / dt;
+            const float dGasDt = (rawClamp - prevGas) / dt;
 
-            // Demand follows the throttle up quickly and falls back slowly, so lifting for a
-            // moment in a hard-driven section does not drop straight into short-shifting.
+            // Demand follows the speed-compensated throttle up quickly and falls back slowly,
+            // so lifting for a moment in a hard-driven section does not drop straight into short-shifting.
             const float tau = (gas >= demand) ? 0.08f : 0.90f;
             demand += (gas - demand) * (1.0f - expf(-dt / tau));
 
@@ -156,7 +191,7 @@ namespace ReShifted
             if (!cfg.sportMemory) sportiness = 0.0f;
 
             // For the overlay: where the shift point sits between eco and sport right now.
-            level = ShiftLevel(cfg, gas);
+            level = ShiftLevel(cfg, rawClamp);
             if (level >= 0.60f) sportMode = true;
             else if (level <= 0.40f) sportMode = false;
 
@@ -164,13 +199,13 @@ namespace ReShifted
             // hold the gear for a moment instead of short-shifting into it.
             if (brake > 0.12f) {
                 holdTimer = 1.0f;
-            } else if (demand > 0.60f && gas < 0.15f && dGasDt < -1.5f) {
+            } else if (demand > 0.60f && rawClamp < 0.15f && dGasDt < -1.5f) {
                 holdTimer = 0.8f;
             } else if (holdTimer > 0.0f) {
                 holdTimer -= dt;
                 if (holdTimer < 0.0f) holdTimer = 0.0f;
             }
-            prevGas = gas;
+            prevGas = rawClamp;
 
             int changed = 0;
             if (gear != lastGear) {
@@ -187,8 +222,9 @@ namespace ReShifted
         }
 
         // 0 = short-shifting (eco), 1 = full sport shift point, from the throttle and recent driving.
-        float ShiftLevel(const Config& cfg, float gas) const
+        float ShiftLevel(const Config& cfg, float rawGas) const
         {
+            const float gas = CompensateThrottleForSpeed(rawGas, speedFrac, cfg);
             float eff = (gas > demand) ? gas : demand;
             if (sportiness > eff) eff = sportiness;
             const float eco = ShiftProfile::Clamp(cfg.ecoThrottle, 0.0f, 0.80f);
@@ -227,7 +263,7 @@ namespace ReShifted
             const float span = p.Span();
             const float d = p.drop[gear - 1];           // After the downshift the RPM is (rpm / d)
             const float lowerSport = p.sportRPM[gear - 1];
-            const float gas = ShiftProfile::Clamp(rawGas, 0.0f, 1.0f);
+            const float gas = CompensateThrottleForSpeed(rawGas, speedFrac, cfg);
             const float brake = ShiftProfile::Clamp(rawBrake, 0.0f, 1.0f);
             const float eff = (gas > demand) ? gas : demand;
 
@@ -304,7 +340,7 @@ namespace ReShifted
 
             if (gear < p.topGear && rawBrake < 0.02f && currentRPM >= upshiftRPM) {
                 const bool pedalOk = rawGas > 0.03f || atLimiter;
-                const bool lockedOut = (lastShiftDir < 0 && sinceShift < ShiftLockSec() && !atLimiter);
+                const bool lockedOut = (lastShiftDir < 0 && sinceShift < ShiftLockSec(cfg) && !atLimiter);
                 // Same idea as the stock gearbox: no upshift while the wheels spin far ahead of the road speed.
                 const bool gripOk = !(wheelGuard > 0.0f && wheelGuard <= 1.0f) ||
                                     wheelRPM >= wheelGuard * upshiftRPM;
@@ -314,7 +350,7 @@ namespace ReShifted
             }
 
             if (gear > 2 && currentRPM <= downshiftRPM) {
-                const bool lockedOut = (lastShiftDir > 0 && sinceShift < ShiftLockSec());
+                const bool lockedOut = (lastShiftDir > 0 && sinceShift < ShiftLockSec(cfg));
                 if (!lockedOut) {
                     return 1;
                 }
@@ -325,6 +361,7 @@ namespace ReShifted
 
         float demand = 0.0f;
         float sportiness = 0.0f;
+        float speedFrac = 0.0f;
         float prevGas = 0.0f;
         float holdTimer = 0.0f;
         float level = 0.0f;

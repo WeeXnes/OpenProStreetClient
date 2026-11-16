@@ -249,7 +249,8 @@ namespace ReShifted
                 // Driven hard, the automatic's 0.5 s wait between an upshift and a downshift
                 // shrinks to as little as 0.25 s. The counters are simply moved to "done".
                 if (g_cfg.quickShiftTime < 0.999f) {
-                    const float wait = ShiftProfile::Lerp(0.50f, 0.25f, ShiftProfile::Clamp(g_ctrl.sportiness, 0.0f, 1.0f));
+                    const float hard = g_cfg.sportMemory ? g_ctrl.sportiness : g_ctrl.demand;
+                    const float wait = ShiftProfile::Lerp(0.50f, 0.25f, ShiftProfile::Clamp(hard, 0.0f, 1.0f));
                     float* sinceDown = reinterpret_cast<float*>(eng + ENGINE_SINCE_DOWNSHIFT_OFF);
                     float* sinceUp = reinterpret_cast<float*>(eng + ENGINE_SINCE_UPSHIFT_OFF);
                     if (*sinceDown >= wait && *sinceDown < 0.5f) *sinceDown = 0.5f;
@@ -293,8 +294,9 @@ namespace ReShifted
             if (done != 0 && current >= 2 && target >= 2) {
                 float* timer = reinterpret_cast<float*>(eng + ENGINE_SHIFT_TIMER_OFF);
                 const float stock = *timer;
+                const float hard = g_cfg.sportMemory ? g_ctrl.sportiness : g_ctrl.demand;
                 const float scale = ShiftProfile::Lerp(1.0f, g_cfg.quickShiftTime,
-                                                       ShiftProfile::Clamp(g_ctrl.sportiness, 0.0f, 1.0f));
+                                                       ShiftProfile::Clamp(hard, 0.0f, 1.0f));
                 if (stock > 0.0f && stock < 5.0f && scale < 0.999f) {
                     *timer = stock * scale;
                 }
@@ -336,6 +338,7 @@ namespace ReShifted
 
             float gas = 0.0f, brake = 0.0f;
             ReadPedals(input, gas, brake);
+            g_ctrl.UpdateSpeed(g_profile, gear, wheelRPM);
 
             const float wheelGuard = (gear == 2) ? g_profile.wheelGuardFirst : g_profile.wheelGuardOther;
             const int decision = g_ctrl.EvaluateShift(g_profile, g_cfg, gear, rpm, wheelRPM, wheelGuard, gas, brake);
@@ -392,7 +395,7 @@ namespace ReShifted
             const int quickPct = GetPrivateProfileIntA("ReShifted", "QuickShiftTime", 60, settings.c_str());
             g_cfg.quickShiftTime = quickShift ? ShiftProfile::Clamp(quickPct / 100.0f, 0.30f, 1.00f) : 1.0f;
 
-            g_cfg.sportMemory = true;
+            g_cfg.sportMemory = GetPrivateProfileIntA("ReShifted", "SportMemory", 1, settings.c_str()) != 0;
             if (g_cfg.style == 1) {
                 // Classic is the first version: throttle only, one gear at a time, stock shift speed.
                 g_cfg.sportMemory = false;
@@ -460,8 +463,8 @@ namespace ReShifted
         }
 
         Log::Event(Log::Tag::Game,
-                   "ReShifted dynamic automatic: active (style=%s, shortShift=%.0f%%, sportSafety=%.0f%%, eco<=%.0f%%, sport>=%.0f%%, coast=%d, skipGears=%d, shiftTime=%.0f%%, indicator=%d)\n",
-                   g_cfg.style == 1 ? "Classic" : "Adaptive",
+                   "ReShifted dynamic automatic: active (style=%s, memory=%d, shortShift=%.0f%%, sportSafety=%.0f%%, eco<=%.0f%%, sport>=%.0f%%, coast=%d, skipGears=%d, shiftTime=%.0f%%, indicator=%d)\n",
+                   g_cfg.style == 1 ? "Classic" : "Adaptive", g_cfg.sportMemory ? 1 : 0,
                    g_cfg.shortShiftFraction * 100.0f, g_cfg.sportRedlineSafety * 100.0f,
                    g_cfg.ecoThrottle * 100.0f, g_cfg.sportThrottle * 100.0f, g_cfg.coastDownshift ? 1 : 0,
                    (ok3 && g_cfg.skipGears) ? 1 : 0, ok3 ? g_cfg.quickShiftTime * 100.0f : 100.0f,

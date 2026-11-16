@@ -216,6 +216,7 @@ ReShifted=1 ; off by default, 1 turns it on
 
 [ReShifted]
 Style=2                ; 1 = Classic (throttle only, 1 gear at a time, stock shift speed), 2 = Adaptive
+SportMemory=1          ; 1 remembers recent hard driving for a few seconds after lifting (Adaptive only)
 CoastDownshift=1       ; 1 shifts down while coasting off the throttle (Adaptive only)
 QuickShift=1           ; 1 shortens gear changes when driving hard (Adaptive only)
 SkipGears=1            ; 1 lets one kickdown drop several gears at once (Adaptive only)
