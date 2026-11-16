@@ -45,6 +45,7 @@ set(CLIENT_SOURCES
     src/game/quick_match.cpp
     src/game/race_mode.cpp
     src/game/race_results.cpp
+    src/game/reshifted.cpp
     src/game/vault_fixes.cpp
     src/game/textures.cpp
     src/game/tweaks.cpp

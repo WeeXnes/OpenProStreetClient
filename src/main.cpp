@@ -9,6 +9,7 @@
 #include "game/overlay.h"
 #include "game/atmosphere.h"
 #include "game/graphics.h"
+#include "game/reshifted.h"
 #include "game/textures.h"
 #include "game/lanfix.h"
 #include "game/race_results.h"
@@ -24,7 +25,7 @@
 
 discord::Core *discordCore = nullptr;
 
-const std::string version = "10.11";
+const std::string version = "10.12";
 
 // Every hook patches nfs.exe v1.1 at fixed addresses, so the client only runs on that layout. The
 // game's version check pushes 1, 1 here (MultiFix reads the same bytes). A packed exe, such as the
@@ -99,6 +100,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
     EventVote::Init();
     AutoLogin::Init(baseModule);
     LanMenu::Init(baseModule);
+    ReShifted::Init(baseModule);
 
     HANDLE hThread = CreateThread(NULL, 0, RpcThread, NULL, 0, NULL);
     if (hThread) {

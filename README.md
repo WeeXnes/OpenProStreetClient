@@ -192,6 +192,21 @@ Enabled=1     ; 0 turns texture packs off
 Log=0         ; 1 lists each loaded texture id, once, in the detailed log
 ```
 
+### ReShifted automatic transmission
+
+**ReShifted** makes the automatic gearbox follow how you drive. With little throttle it shifts up early at low RPM; with a lot of throttle it holds each gear to the shift point the game computed for that car (near the redline). Flooring it kicks down, braking shifts down and holds the gear through the corner. The per-car data comes from the game's own shift tables, so tuning and upgrades are included.
+
+```ini
+[Transmission]
+ReShifted=1 ; off by default, 1 turns it on
+
+[ReShifted]
+ShortShiftFraction=28 ; gentle-driving shift point, % of the way from idle to redline
+SportRedlineSafety=97 ; highest shift point (% of redline)
+KickdownAggression=100
+Log=0                 ; 1 prints every shift decision to the console
+```
+
 ### Display test
 
 A test for working on an overlay, not for playing. Add this to `scripts/OpenProStreetClient.ini`:
