@@ -1,5 +1,6 @@
 #include "game/overlay.h"
 #include "game/race_results.h"
+#include "game/reshifted.h"
 
 #include <windows.h>
 #include <d3d9.h>
@@ -1089,6 +1090,35 @@ namespace Overlay
     }
 
     // A card's title with the 6px status dot in front, as the notices have.
+    // A small pill at the bottom centre: which way the ReShifted gearbox is shifting right now.
+    static void DrawShiftIndicator(const ReShifted::Indicator& shift, float s)
+    {
+        const ImGuiIO& io = ImGui::GetIO();
+        const ImVec4& colour = shift.sport ? Warning : Success;
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y - 18.0f * s), ImGuiCond_Always, ImVec2(0.5f, 1.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f * s, 5.0f * s));
+        if (ImGui::Begin("##shift", nullptr, PanelFlags))
+        {
+            ImGui::PushFont(g_fontMicro);
+            const ImVec2 at = ImGui::GetCursorScreenPos();
+            const float lineHeight = ImGui::GetTextLineHeight();
+            ImDrawList* draw = ImGui::GetWindowDrawList();
+            draw->AddCircleFilled(ImVec2(at.x + 3.0f * s, at.y + lineHeight * 0.5f), 3.0f * s, ImGui::GetColorU32(colour));
+            ImGui::SetCursorScreenPos(ImVec2(at.x + 12.0f * s, at.y));
+            ImGui::TextColored(colour, "%s", shift.sport ? "SPORT" : "ECO");
+            // A thin bar under the label: how far between eco and sport the shift point sits.
+            const ImVec2 end = ImGui::GetCursorScreenPos();
+            const float width = ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x;
+            const float barWidth = width > 44.0f * s ? width : 44.0f * s;
+            draw->AddRectFilled(ImVec2(at.x, end.y), ImVec2(at.x + barWidth, end.y + 2.0f * s), ImGui::GetColorU32(Line), 1.0f * s);
+            draw->AddRectFilled(ImVec2(at.x, end.y), ImVec2(at.x + barWidth * shift.level, end.y + 2.0f * s), ImGui::GetColorU32(colour), 1.0f * s);
+            ImGui::Dummy(ImVec2(barWidth, 3.0f * s));
+            ImGui::PopFont();
+        }
+        ImGui::End();
+        ImGui::PopStyleVar();
+    }
+
     static void DrawCardTitle(const char* title, const ImVec4& dot, float s)
     {
         const ImVec2 at = ImGui::GetCursorScreenPos();
@@ -1173,7 +1203,8 @@ namespace Overlay
                 if (g_notices || g_noticeQueue[i].kind == "refused") notices.push_back(g_noticeQueue[i]);
             }
         }
-        if (!showStanding && !showLobby && notices.empty() && !g_test && !vote.windowOpen && !vote.voteActive) return;
+        const ReShifted::Indicator shift = ReShifted::GetIndicator();
+        if (!showStanding && !showLobby && notices.empty() && !g_test && !vote.windowOpen && !vote.voteActive && !shift.shown) return;
         if (!g_drawnOnce)
         {
             g_drawnOnce = true;
@@ -1219,6 +1250,7 @@ namespace Overlay
         if (showStanding) DrawStanding(trackName, mode, boards, paceBarShown, pace, s);
         if (showLobby) DrawLobby(lobbyRoom, lobbyAtmosphere, lobbyEvent, lobbyEvents, lobbyPlayers, lobbyTimer, vote, s);
         if (!notices.empty()) DrawNotices(notices, now, s);
+        if (shift.shown) DrawShiftIndicator(shift, s);
         if (vote.voteActive) DrawVotePopup(vote, s);
         if (vote.windowOpen) DrawVoteWindow(vote, s);
         if (g_test)
@@ -1239,13 +1271,15 @@ namespace Overlay
         }
         ImGui::EndFrame();
         // The game renders its effects through other surfaces, which can still be bound when it
-        // presents. Draw on the back buffer itself, without a depth buffer of another size, and put
-        // the game's surfaces back after.
+        // presents. Draw on the back buffer itself, keeping a compatible depth surface bound (only
+        // unbinding when sizes or MSAA differ) so overlays/wrappers like ReShade don't lose depth.
         ImGui::Render();
         ImDrawData* drawData = ImGui::GetDrawData();
         IDirect3DSurface9* gameTarget = nullptr;
         IDirect3DSurface9* gameDepth = nullptr;
         IDirect3DSurface9* backBuffer = nullptr;
+        D3DVIEWPORT9 gameViewport = {};
+        const bool haveViewport = SUCCEEDED(device->GetViewport(&gameViewport));
         device->GetRenderTarget(0, &gameTarget);
         device->GetDepthStencilSurface(&gameDepth);
         // ImGui's backend leaves some states as the game had them, and a game can leave colour
@@ -1254,11 +1288,39 @@ namespace Overlay
         IDirect3DStateBlock9* gameState = nullptr;
         if (SUCCEEDED(device->CreateStateBlock(D3DSBT_ALL, &gameState)) && gameState) gameState->Capture();
         HRESULT targetResult = E_FAIL, sceneResult = E_FAIL;
+        bool switchedTarget = false;
+        bool switchedDepth = false;
         if (SUCCEEDED(device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &backBuffer)) && backBuffer)
         {
-            targetResult = device->SetRenderTarget(0, backBuffer);
-            device->SetDepthStencilSurface(nullptr);
-            device->SetRenderState(D3DRS_COLORWRITEENABLE, 0x0000000F);
+            if (gameTarget == backBuffer)
+            {
+                targetResult = S_OK;
+            }
+            else
+            {
+                targetResult = device->SetRenderTarget(0, backBuffer);
+                switchedTarget = SUCCEEDED(targetResult);
+            }
+
+            if (gameDepth)
+            {
+                D3DSURFACE_DESC bbDesc = {};
+                D3DSURFACE_DESC dsDesc = {};
+                const bool compat = SUCCEEDED(backBuffer->GetDesc(&bbDesc)) &&
+                                    SUCCEEDED(gameDepth->GetDesc(&dsDesc)) &&
+                                    dsDesc.Width >= bbDesc.Width &&
+                                    dsDesc.Height >= bbDesc.Height &&
+                                    dsDesc.MultiSampleType == bbDesc.MultiSampleType &&
+                                    dsDesc.MultiSampleQuality == bbDesc.MultiSampleQuality;
+                if (!compat)
+                {
+                    device->SetDepthStencilSurface(nullptr);
+                    switchedDepth = true;
+                }
+            }
+
+            // Write RGB only so back-buffer alpha stays unchanged for downstream ReShade shaders.
+            device->SetRenderState(D3DRS_COLORWRITEENABLE, 0x00000007);
             device->SetRenderState(D3DRS_SRGBWRITEENABLE, FALSE);
             device->SetRenderState(D3DRS_CLIPPLANEENABLE, 0);
             device->SetRenderState(D3DRS_MULTISAMPLEANTIALIAS, FALSE);
@@ -1284,13 +1346,11 @@ namespace Overlay
             gameState->Apply();
             gameState->Release();
         }
-        if (gameTarget)
-        {
-            device->SetRenderTarget(0, gameTarget);
-            gameTarget->Release();
-        }
-        device->SetDepthStencilSurface(gameDepth);
+        if (switchedTarget && gameTarget) device->SetRenderTarget(0, gameTarget);
+        if (gameTarget) gameTarget->Release();
+        if (switchedDepth) device->SetDepthStencilSurface(gameDepth);
         if (gameDepth) gameDepth->Release();
+        if (haveViewport) device->SetViewport(&gameViewport);
 
         // What happened, logged once a while after drawing starts, so a missing overlay can be traced.
         ++g_frames;

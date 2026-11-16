@@ -5,6 +5,11 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <cstdarg>
+#include <cstdlib>
+#include <map>
+#include <string>
+#include <windows.h>
 
 namespace Tweaks
 {
@@ -288,9 +293,82 @@ namespace Tweaks
     static bool g_hasIncomingCarId = false;
     static uint32_t g_incomingCarId = 0;
 
+    // Car sync log (test build): why a remote car stops taking the states its owner sends.
+    // 0x772420 drops a state when its timestamp isn't newer than the car's current one (+0x1100),
+    // when the 32-slot history is full (head +0x11ac would reach tail +0x11b0), or in the first
+    // second when the car is over 0.5 m away (+0x11c5 cleared). The log goes to
+    // %LOCALAPPDATA%\OpenProStreet\carsync.log.
+    struct CarSyncTrack {
+        DWORD lastPacket = 0;
+        DWORD lastAccepted = 0;
+        int dropped = 0;       // dropped in a row
+        bool silentLogged = false;
+        int lastState = -1;
+        int lastBit = -1;
+    };
+    static std::map<uint32_t, CarSyncTrack> g_carSync;
+    static FILE* g_carSyncFile = nullptr;
+    static bool g_carSyncTried = false;
+
+    static void CarSyncLog(const char* format, ...)
+    {
+        if (!g_carSyncTried) {
+            g_carSyncTried = true;
+            const char* local = getenv("LOCALAPPDATA");
+            if (local) {
+                std::string dir = std::string(local) + "\\OpenProStreet";
+                CreateDirectoryA(dir.c_str(), nullptr);
+                g_carSyncFile = fopen((dir + "\\carsync.log").c_str(), "a");
+                if (g_carSyncFile) fprintf(g_carSyncFile, "---- session start\n");
+            }
+        }
+        if (!g_carSyncFile) return;
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        fprintf(g_carSyncFile, "%02d:%02d:%02d.%03d ", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+        va_list args;
+        va_start(args, format);
+        vfprintf(g_carSyncFile, format, args);
+        va_end(args);
+        fputc('\n', g_carSyncFile);
+        fflush(g_carSyncFile);
+    }
+
+    template <typename T> static T Field(void* obj, uintptr_t offset) { return *reinterpret_cast<T*>(reinterpret_cast<uintptr_t>(obj) + offset); }
+
+    static void CarSyncFields(char* out, size_t size, void* o, uint32_t flags, float timestamp)
+    {
+        const uintptr_t slot = Field<uintptr_t>(o, 0x11a0);
+        snprintf(out, size,
+                 "head=%u tail=%u cur.ts=%.3f slot.blend=%.3f state=%d lastFlags=%u bit=%u c3=%u c5=%u resetAt=%.3f clockOff=%.3f | pkt flags=0x%X t=%.3f",
+                 Field<uint32_t>(o, 0x11ac), Field<uint32_t>(o, 0x11b0), Field<float>(o, 0x1100),
+                 slot ? *reinterpret_cast<float*>(slot + 0x78) : -99.0f, Field<int>(o, 0x118c),
+                 Field<uint8_t>(o, 0x11c1), Field<uint8_t>(o, 0x11c2), Field<uint8_t>(o, 0x11c3), Field<uint8_t>(o, 0x11c5),
+                 Field<float>(o, 0x11a4), Field<float>(o, 0x11bc), flags, timestamp);
+    }
+
     static void __attribute__((fastcall)) NetCarStateBridge(
         void* carSyncObj, uint32_t carId, void* bitStream, uint32_t flags, float timestamp)
     {
+        const DWORD now = GetTickCount();
+        CarSyncTrack& track = g_carSync[carId];
+        // Cars that went quiet: their owner stopped sending, which the receiver can't fix.
+        for (auto& entry : g_carSync) {
+            if (entry.first != carId && entry.second.lastPacket && !entry.second.silentLogged && now - entry.second.lastPacket > 2000) {
+                entry.second.silentLogged = true;
+                CarSyncLog("car %u: no states for %lu ms", entry.first, static_cast<unsigned long>(now - entry.second.lastPacket));
+            }
+        }
+        if (track.lastPacket && now - track.lastPacket > 1000)
+            CarSyncLog("car %u: states again after %lu ms without any", carId, static_cast<unsigned long>(now - track.lastPacket));
+        track.lastPacket = now;
+        track.silentLogged = false;
+
+        const float tsBefore = Field<float>(carSyncObj, 0x1100);
+        const uint32_t headBefore = Field<uint32_t>(carSyncObj, 0x11ac);
+        char before[400];
+        CarSyncFields(before, sizeof(before), carSyncObj, flags, timestamp);
+
         const bool prevHas = g_hasIncomingCarId;
         const uint32_t prevId = g_incomingCarId;
         g_hasIncomingCarId = true;
@@ -298,6 +376,36 @@ namespace Tweaks
         reinterpret_cast<UnpackNetworkCarStateFn>(g_syncBaseModule + 0x372420)(carSyncObj, bitStream, flags, timestamp);
         g_hasIncomingCarId = prevHas;
         g_incomingCarId = prevId;
+
+        const float tsAfter = Field<float>(carSyncObj, 0x1100);
+        const uint32_t headAfter = Field<uint32_t>(carSyncObj, 0x11ac);
+        const bool accepted = tsAfter != tsBefore || headAfter != headBefore;
+        char after[400];
+        CarSyncFields(after, sizeof(after), carSyncObj, flags, timestamp);
+
+        const int state = Field<int>(carSyncObj, 0x118c);
+        const int bit = Field<uint8_t>(carSyncObj, 0x11c2);
+        if (state != track.lastState || bit != track.lastBit) {
+            CarSyncLog("car %u: state %d -> %d, bit %d -> %d | %s", carId, track.lastState, state, track.lastBit, bit, after);
+            track.lastState = state;
+            track.lastBit = bit;
+        }
+        if (flags & 8) CarSyncLog("car %u: reset flag in packet | %s", carId, after);
+
+        if (accepted) {
+            if (track.dropped >= 3)
+                CarSyncLog("car %u: takes states again after %d dropped | %s", carId, track.dropped, after);
+            track.dropped = 0;
+            track.lastAccepted = now;
+            return;
+        }
+        ++track.dropped;
+        const char* why = Field<uint8_t>(carSyncObj, 0x11c5) == 0 ? "start distance check"
+                        : (((headBefore + 1) & 31) == Field<uint32_t>(carSyncObj, 0x11b0) ? "history full"
+                        : "not newer than the current state");
+        if (track.dropped == 3 || track.dropped % 120 == 0)
+            CarSyncLog("car %u: %d states dropped in a row (%s), last taken %lu ms ago | before: %s | after: %s",
+                       carId, track.dropped, why, static_cast<unsigned long>(now - track.lastAccepted), before, after);
     }
 
     static uint8_t __attribute__((thiscall)) UnpackExtrapState_Hook(

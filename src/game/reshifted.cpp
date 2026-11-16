@@ -15,7 +15,11 @@
 //   Engine simulate (0x00489590) asks vtable+0x48 = GetShiftPotential(gear, engineRPM, wheelRPM)
 //   every step and stores the answer at engine+0x168 (0 = stay, 1 = down, 2 = up).
 //   vtable+0x44 = Update(dt) (0x00489350) runs the automatic (0x00487A50), which reads
-//   +0x168 and performs the shift (0x004881D0).
+//   +0x168 and performs the shift (0x004881D0), one gear at a time.
+//   0x004881D0 goes through vtable+0x30 = ChangeGear(gear) (0x00487DF0), which accepts any
+//   gear, sets engine+0x84 to it at once and starts the shift timer at engine+0x88 from the
+//   car's shift times (data+0x14 up, data+0x98 down). Power is cut while that timer runs.
+//   The automatic also waits 0.5 s between an upshift and a downshift (+0x1DC / +0x1E0).
 //
 // So replacing the answer of GetShiftPotential is enough to drive the gearbox. The stock
 // answer comes from two per-gear RPM tables in the engine object (+0xA0 up, +0xC8 down)
@@ -26,6 +30,7 @@ namespace ReShifted
     {
         const uintptr_t ENGINE_UPDATE_RVA          = 0x00089350; // Engine vtable+0x44: Update(float dt)
         const uintptr_t ENGINE_SHIFT_POTENTIAL_RVA = 0x00087D40; // Engine vtable+0x48: GetShiftPotential(gear, rpm, wheelRPM)
+        const uintptr_t ENGINE_CHANGE_GEAR_RVA     = 0x00087DF0; // Engine vtable+0x30: ChangeGear(gear)
         const uintptr_t LOCAL_PLAYER_LIST_RVA      = 0x006CE444;
         const uintptr_t LOCAL_PLAYER_COUNT_RVA     = 0x006CE44C;
 
@@ -33,6 +38,9 @@ namespace ReShifted
         const uintptr_t ENGINE_OWNER_SIMABLE_OFF   = 0x2C;
         const uintptr_t ENGINE_ITRANS_OFF          = 0x44;
         const uintptr_t ENGINE_GEAR_OFF            = 0x84;
+        const uintptr_t ENGINE_SHIFT_TIMER_OFF     = 0x88;  // Seconds left of the running gear change
+        const uintptr_t ENGINE_SINCE_DOWNSHIFT_OFF = 0x1DC; // Automatic: counts to 0.5 s, then upshifts are allowed
+        const uintptr_t ENGINE_SINCE_UPSHIFT_OFF   = 0x1E0; // Automatic: counts to 0.5 s, then downshifts are allowed
         const uintptr_t ENGINE_SHIFT_UP_RPM_OFF    = 0xA0;  // float[10], index = game gear
         const uintptr_t ENGINE_SHIFT_DOWN_RPM_OFF  = 0xC8;  // float[10], index = game gear
         const uintptr_t ENGINE_MANUAL_FLAG_OFF     = 0x11C;
@@ -55,6 +63,7 @@ namespace ReShifted
 
         typedef void (__attribute__((thiscall)) *EngineUpdateFn)(void* engine, float dt);
         typedef int (__attribute__((thiscall)) *EngineGetShiftPotentialFn)(void* engine, int gear, float rpm, float wheelRPM);
+        typedef int (__attribute__((thiscall)) *EngineChangeGearFn)(void* engine, int gear);
         typedef int (__attribute__((thiscall)) *TransGetTopGearFn)(void* iTrans);
         typedef float (__attribute__((thiscall)) *InputGetFloatFn)(void* iInput);
         typedef uint8_t (__attribute__((thiscall)) *InputIsAutoFn)(void* iInput);
@@ -69,10 +78,16 @@ namespace ReShifted
         int g_cachedTopGear = 0;
         float g_cachedTables[2 * kMaxGears]{};
         int g_lastLoggedPotential = -1;
+        volatile DWORD g_lastActiveTick = 0; // GetTickCount() of the last shift decision, for the overlay
         float g_lastRPM = 0.0f;
 
         EngineUpdateFn            g_origEngineUpdate = nullptr;
         EngineGetShiftPotentialFn g_origGetShiftPotential = nullptr;
+        EngineChangeGearFn        g_origChangeGear = nullptr;
+
+        bool g_inAutoUpdate = false; // True while the game's automatic runs for the local player's engine
+        int g_skipFromGear = -1;     // Gear the pending downshift was decided in
+        int g_skipTarget = -1;       // Gear that downshift should end in (may be more than one below)
 
         bool SafeReadPtr(uintptr_t addr, uintptr_t& outVal)
         {
@@ -222,20 +237,74 @@ namespace ReShifted
                 if (engine != g_cachedEngine) {
                     g_ctrl.Reset();
                     g_lastLoggedPotential = -1;
+                    g_skipTarget = -1;
                 }
 
                 float gas = 0.0f, brake = 0.0f;
                 ReadPedals(input, gas, brake);
-                const int gear = *reinterpret_cast<const int*>(reinterpret_cast<uintptr_t>(engine) + ENGINE_GEAR_OFF);
-                const int changed = g_ctrl.Tick(dt, gear, gas, brake);
+                const uintptr_t eng = reinterpret_cast<uintptr_t>(engine);
+                const int gear = *reinterpret_cast<const int*>(eng + ENGINE_GEAR_OFF);
+                const int changed = g_ctrl.Tick(dt, gear, gas, brake, g_cfg);
+
+                // Driven hard, the automatic's 0.5 s wait between an upshift and a downshift
+                // shrinks to as little as 0.25 s. The counters are simply moved to "done".
+                if (g_cfg.quickShiftTime < 0.999f) {
+                    const float wait = ShiftProfile::Lerp(0.50f, 0.25f, ShiftProfile::Clamp(g_ctrl.sportiness, 0.0f, 1.0f));
+                    float* sinceDown = reinterpret_cast<float*>(eng + ENGINE_SINCE_DOWNSHIFT_OFF);
+                    float* sinceUp = reinterpret_cast<float*>(eng + ENGINE_SINCE_UPSHIFT_OFF);
+                    if (*sinceDown >= wait && *sinceDown < 0.5f) *sinceDown = 0.5f;
+                    if (*sinceUp >= wait && *sinceUp < 0.5f) *sinceUp = 0.5f;
+                }
 
                 if (changed != 0 && g_cfg.logShifts) {
                     Log::Event(Log::Tag::Game, "[ReShifted] Gear %d -> %d (rpm before=%.0f gas=%.2f brake=%.2f)\n",
                                gear - 1 - changed, gear - 1, g_lastRPM, gas, brake);
                 }
+
+                g_inAutoUpdate = true;
+                g_origEngineUpdate(engine, dt);
+                g_inAutoUpdate = false;
+                return;
             }
 
             g_origEngineUpdate(engine, dt);
+        }
+
+        // Every gear change of the engine goes through here. Only the local player's automatic
+        // is touched: a kickdown may go more than one gear down, and the change itself is
+        // quicker the harder the car has been driven.
+        int __attribute__((thiscall)) Hook_Engine_ChangeGear(void* engine, int gear)
+        {
+            if (!g_inAutoUpdate || engine != g_cachedEngine || !g_profile.valid) {
+                return g_origChangeGear(engine, gear);
+            }
+
+            const uintptr_t eng = reinterpret_cast<uintptr_t>(engine);
+            const int current = *reinterpret_cast<const int*>(eng + ENGINE_GEAR_OFF);
+
+            int target = gear;
+            if (g_cfg.skipGears && gear == current - 1 && g_skipFromGear == current &&
+                g_skipTarget >= 2 && g_skipTarget < gear) {
+                target = g_skipTarget;
+            }
+            g_skipTarget = -1;
+
+            const int done = g_origChangeGear(engine, target);
+            if (done != 0 && current >= 2 && target >= 2) {
+                float* timer = reinterpret_cast<float*>(eng + ENGINE_SHIFT_TIMER_OFF);
+                const float stock = *timer;
+                const float scale = ShiftProfile::Lerp(1.0f, g_cfg.quickShiftTime,
+                                                       ShiftProfile::Clamp(g_ctrl.sportiness, 0.0f, 1.0f));
+                if (stock > 0.0f && stock < 5.0f && scale < 0.999f) {
+                    *timer = stock * scale;
+                }
+                if (g_cfg.logShifts) {
+                    Log::Event(Log::Tag::Game, "[ReShifted] Change %d -> %d%s: shift time %.2fs -> %.2fs (sporty=%.2f)\n",
+                               current - 1, target - 1, target != gear ? " (skipped gears)" : "",
+                               stock, *timer, g_ctrl.sportiness);
+                }
+            }
+            return done;
         }
 
         int __attribute__((thiscall)) Hook_Engine_GetShiftPotential(void* engine, int gear, float rpm, float wheelRPM)
@@ -271,12 +340,21 @@ namespace ReShifted
             const float wheelGuard = (gear == 2) ? g_profile.wheelGuardFirst : g_profile.wheelGuardOther;
             const int decision = g_ctrl.EvaluateShift(g_profile, g_cfg, gear, rpm, wheelRPM, wheelGuard, gas, brake);
             g_lastRPM = rpm;
+            g_lastActiveTick = GetTickCount();
+
+            if (decision == 1) {
+                g_skipFromGear = gear;
+                g_skipTarget = g_ctrl.ComputeDownshiftTarget(g_profile, g_cfg, gear, rpm, gas, brake);
+            } else {
+                g_skipTarget = -1;
+            }
 
             if (g_cfg.logShifts && decision != 0 && decision != g_lastLoggedPotential) {
                 Log::Event(Log::Tag::Game,
-                           "[ReShifted] Ask %s in gear %d: rpm=%.0f wheelRpm=%.0f gas=%.2f brake=%.2f demand=%.2f sporty=%.2f upAt=%.0f downAt=%.0f\n",
+                           "[ReShifted] Ask %s in gear %d (to %d): rpm=%.0f wheelRpm=%.0f gas=%.2f brake=%.2f demand=%.2f sporty=%.2f upAt=%.0f downAt=%.0f\n",
                            decision == 2 ? "UP" : "DOWN",
-                           gear - 1, rpm, wheelRPM, gas, brake, g_ctrl.demand, g_ctrl.sportiness,
+                           gear - 1, decision == 2 ? gear : g_skipTarget - 1,
+                           rpm, wheelRPM, gas, brake, g_ctrl.demand, g_ctrl.sportiness,
                            g_ctrl.lastUpshiftRPM, g_ctrl.lastDownshiftRPM);
             }
             g_lastLoggedPotential = decision;
@@ -300,8 +378,44 @@ namespace ReShifted
             const int kickPct = GetPrivateProfileIntA("ReShifted", "KickdownAggression", 100, settings.c_str());
             g_cfg.kickdownAggression = ShiftProfile::Clamp(kickPct / 100.0f, 0.60f, 1.25f);
 
+            const int ecoPct = GetPrivateProfileIntA("ReShifted", "EcoThrottle", 25, settings.c_str());
+            g_cfg.ecoThrottle = ShiftProfile::Clamp(ecoPct / 100.0f, 0.0f, 0.80f);
+
+            const int sportPct = GetPrivateProfileIntA("ReShifted", "SportThrottle", 85, settings.c_str());
+            g_cfg.sportThrottle = ShiftProfile::Clamp(sportPct / 100.0f, g_cfg.ecoThrottle + 0.10f, 1.0f);
+
+            g_cfg.style = (GetPrivateProfileIntA("ReShifted", "Style", 2, settings.c_str()) == 1) ? 1 : 2;
+            g_cfg.coastDownshift = GetPrivateProfileIntA("ReShifted", "CoastDownshift", 1, settings.c_str()) != 0;
+            g_cfg.skipGears = GetPrivateProfileIntA("ReShifted", "SkipGears", 1, settings.c_str()) != 0;
+
+            const bool quickShift = GetPrivateProfileIntA("ReShifted", "QuickShift", 1, settings.c_str()) != 0;
+            const int quickPct = GetPrivateProfileIntA("ReShifted", "QuickShiftTime", 60, settings.c_str());
+            g_cfg.quickShiftTime = quickShift ? ShiftProfile::Clamp(quickPct / 100.0f, 0.30f, 1.00f) : 1.0f;
+
+            g_cfg.sportMemory = true;
+            if (g_cfg.style == 1) {
+                // Classic is the first version: throttle only, one gear at a time, stock shift speed.
+                g_cfg.sportMemory = false;
+                g_cfg.coastDownshift = false;
+                g_cfg.skipGears = false;
+                g_cfg.quickShiftTime = 1.0f;
+            }
+
+            g_cfg.indicator = GetPrivateProfileIntA("ReShifted", "Indicator", 1, settings.c_str()) != 0;
+
             g_cfg.logShifts = GetPrivateProfileIntA("ReShifted", "Log", 0, settings.c_str()) != 0;
         }
+    }
+
+    Indicator GetIndicator()
+    {
+        Indicator out;
+        if (!g_cfg.enabled || !g_cfg.indicator || g_lastActiveTick == 0) return out;
+        if (GetTickCount() - g_lastActiveTick > 400) return out;
+        out.shown = true;
+        out.sport = g_ctrl.sportMode;
+        out.level = g_ctrl.level;
+        return out;
     }
 
     void Init(uintptr_t baseModule)
@@ -336,8 +450,21 @@ namespace ReShifted
             return;
         }
 
+        // Optional extra: without this hook the gearbox still works, one gear at a time at stock speed.
+        void* changeGearTarget = reinterpret_cast<void*>(baseModule + ENGINE_CHANGE_GEAR_RVA);
+        const bool ok3 = MH_CreateHook(changeGearTarget, reinterpret_cast<void*>(Hook_Engine_ChangeGear),
+                                       reinterpret_cast<void**>(&g_origChangeGear)) == MH_OK &&
+                         MH_EnableHook(changeGearTarget) == MH_OK;
+        if (!ok3) {
+            Log::Warn("[ReShifted] Gear change hook failed; skip-gear kickdown and quick shifts are off\n");
+        }
+
         Log::Event(Log::Tag::Game,
-                   "ReShifted dynamic automatic: active (shortShift=%.0f%%, sportSafety=%.0f%%)\n",
-                   g_cfg.shortShiftFraction * 100.0f, g_cfg.sportRedlineSafety * 100.0f);
+                   "ReShifted dynamic automatic: active (style=%s, shortShift=%.0f%%, sportSafety=%.0f%%, eco<=%.0f%%, sport>=%.0f%%, coast=%d, skipGears=%d, shiftTime=%.0f%%, indicator=%d)\n",
+                   g_cfg.style == 1 ? "Classic" : "Adaptive",
+                   g_cfg.shortShiftFraction * 100.0f, g_cfg.sportRedlineSafety * 100.0f,
+                   g_cfg.ecoThrottle * 100.0f, g_cfg.sportThrottle * 100.0f, g_cfg.coastDownshift ? 1 : 0,
+                   (ok3 && g_cfg.skipGears) ? 1 : 0, ok3 ? g_cfg.quickShiftTime * 100.0f : 100.0f,
+                   g_cfg.indicator ? 1 : 0);
     }
 }

@@ -192,6 +192,20 @@ Enabled=1     ; 0 turns texture packs off
 Log=0         ; 1 lists each loaded texture id, once, in the detailed log
 ```
 
+### Right-stick camera orbit
+
+In non-drag races with Automatic transmission enabled, the direction of the controller's right stick picks where the exterior camera sits around your car: down is the normal view from behind, up shows the car from the front, left shows it from its right side and right from its left side, with everything in between for diagonals. Release the stick and the camera swings back behind the car. This replaces the right-stick manual shift override.
+
+```ini
+[Camera]
+RightStickOrbit=1    ; 0 turns right-stick orbit off and restores manual shift override
+OrbitBlockShift=1    ; 1 disables right-stick manual shift override while active
+OrbitDeadzone=30     ; how far the stick must be pushed before the camera moves, in percent (5 to 90)
+OrbitSnapTime=50     ; milliseconds to reach a new angle (0 = instant)
+OrbitBackTime=250    ; milliseconds to swing back behind the car after release (0 = instant)
+OrbitInvertX=0       ; 1 swaps the left and right sides
+```
+
 ### ReShifted automatic transmission
 
 **ReShifted** makes the automatic gearbox follow how you drive. With little throttle it shifts up early at low RPM; with a lot of throttle it holds each gear to the shift point the game computed for that car (near the redline). Flooring it kicks down, braking shifts down and holds the gear through the corner. The per-car data comes from the game's own shift tables, so tuning and upgrades are included.
@@ -201,10 +215,18 @@ Log=0         ; 1 lists each loaded texture id, once, in the detailed log
 ReShifted=1 ; off by default, 1 turns it on
 
 [ReShifted]
-ShortShiftFraction=28 ; gentle-driving shift point, % of the way from idle to redline
-SportRedlineSafety=97 ; highest shift point (% of redline)
+Style=2                ; 1 = Classic (throttle only, 1 gear at a time, stock shift speed), 2 = Adaptive
+CoastDownshift=1       ; 1 shifts down while coasting off the throttle (Adaptive only)
+QuickShift=1           ; 1 shortens gear changes when driving hard (Adaptive only)
+SkipGears=1            ; 1 lets one kickdown drop several gears at once (Adaptive only)
+Indicator=1            ; 1 shows the ECO / SPORT marker in the overlay while racing
+ShortShiftFraction=28  ; gentle-driving shift point, % of the way from idle to redline (10 to 55)
+SportRedlineSafety=97  ; highest shift point, % of redline (88 to 99)
+EcoThrottle=25         ; up to this throttle % the gearbox short-shifts (0 to 80)
+SportThrottle=85       ; from this throttle % it holds to the sport shift point (10 to 100)
 KickdownAggression=100
-Log=0                 ; 1 prints every shift decision to the console
+QuickShiftTime=60      ; gear change time when driven hard, % of the stock time (30 to 100)
+Log=0                  ; 1 prints every shift decision to the console
 ```
 
 ### Display test

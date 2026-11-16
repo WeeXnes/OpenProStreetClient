@@ -13,8 +13,26 @@ namespace ReShifted
         float shortShiftFraction = 0.28f;  // Gentle-driving shift point inside (redline - idle)
         float sportRedlineSafety = 0.97f;  // Highest shift point as a share of the redline
         float kickdownAggression = 1.00f;  // Scales how eagerly high throttle downshifts
+        float ecoThrottle = 0.25f;         // Up to this much throttle the gearbox short-shifts
+        float sportThrottle = 0.85f;       // From this much throttle it uses the full sport shift point
+        int style = 2;                     // 1 = Classic (the first version), 2 = Adaptive
+        // The four below belong to the Adaptive style and are forced off in Classic.
+        bool sportMemory = true;           // Remember recent hard driving and keep the shift points up
+        bool coastDownshift = true;        // Shift down while coasting off the throttle
+        bool skipGears = true;             // One kickdown may drop several gears at once
+        float quickShiftTime = 0.60f;      // Gear change time when driven hard, as a share of the stock time (1 = stock)
+        bool indicator = true;             // Small ECO / SPORT marker in the overlay
         bool logShifts = false;
     };
+
+    // What the overlay shows.
+    struct Indicator
+    {
+        bool shown = false;  // The gearbox is driving the local player's car right now
+        bool sport = false;  // false = ECO, true = SPORT
+        float level = 0.0f;  // 0 = full eco, 1 = full sport
+    };
+    Indicator GetIndicator();
 
     // Per-car shift data, built from what the game itself computed for the car.
     struct ShiftProfile
@@ -94,7 +112,11 @@ namespace ReShifted
     public:
         // Time after a gear change in which the opposite shift is refused. The engine RPM
         // is still settling then, which is what caused the old up-then-straight-down pair.
-        static constexpr float kShiftLockSec = 0.8f;
+        // Shorter when the car is being driven hard.
+        float ShiftLockSec() const
+        {
+            return ShiftProfile::Lerp(0.80f, 0.45f, ShiftProfile::Clamp(sportiness, 0.0f, 1.0f));
+        }
 
         void Reset()
         {
@@ -102,6 +124,8 @@ namespace ReShifted
             sportiness = 0.0f;
             prevGas = 0.0f;
             holdTimer = 0.0f;
+            level = 0.0f;
+            sportMode = false;
             lastGear = -1;
             lastShiftDir = 0;
             sinceShift = 10.0f;
@@ -110,8 +134,8 @@ namespace ReShifted
         }
 
         // Call once per simulation step with the real throttle and brake (0..1) and the current gear.
-        // Returns the gear change that just happened: +1 up, -1 down, 0 none.
-        int Tick(float dt, int gear, float rawGas, float rawBrake)
+        // Returns the gear change that just happened in gears: +1 up, -2 two gears down, 0 none.
+        int Tick(float dt, int gear, float rawGas, float rawBrake, const Config& cfg)
         {
             if (dt <= 0.0f) return 0;
             if (dt > 0.05f) dt = 0.05f;
@@ -129,6 +153,12 @@ namespace ReShifted
             // about 2 s of hard driving to build up, about 8 s of calm driving to fade.
             const float sportTau = (demand >= sportiness) ? 2.0f : 8.0f;
             sportiness += (demand - sportiness) * (1.0f - expf(-dt / sportTau));
+            if (!cfg.sportMemory) sportiness = 0.0f;
+
+            // For the overlay: where the shift point sits between eco and sport right now.
+            level = ShiftLevel(cfg, gas);
+            if (level >= 0.60f) sportMode = true;
+            else if (level <= 0.40f) sportMode = false;
 
             // Braking, or snapping the throttle shut from hard driving, means a corner is coming:
             // hold the gear for a moment instead of short-shifting into it.
@@ -145,8 +175,8 @@ namespace ReShifted
             int changed = 0;
             if (gear != lastGear) {
                 if (lastGear >= 2 && gear >= 2) {
-                    changed = (gear > lastGear) ? 1 : -1;
-                    lastShiftDir = changed;
+                    changed = gear - lastGear;
+                    lastShiftDir = (changed > 0) ? 1 : -1;
                     sinceShift = 0.0f;
                 }
                 lastGear = gear;
@@ -154,6 +184,17 @@ namespace ReShifted
                 sinceShift += dt;
             }
             return changed;
+        }
+
+        // 0 = short-shifting (eco), 1 = full sport shift point, from the throttle and recent driving.
+        float ShiftLevel(const Config& cfg, float gas) const
+        {
+            float eff = (gas > demand) ? gas : demand;
+            if (sportiness > eff) eff = sportiness;
+            const float eco = ShiftProfile::Clamp(cfg.ecoThrottle, 0.0f, 0.80f);
+            const float sport = ShiftProfile::Clamp(cfg.sportThrottle, eco + 0.10f, 1.0f);
+            const float t = ShiftProfile::Clamp((eff - eco) / (sport - eco), 0.0f, 1.0f);
+            return t * t * (3.0f - 2.0f * t);
         }
 
         // RPM at which gear g shifts up: low when driving gently, the car's sport point when driving hard.
@@ -170,14 +211,11 @@ namespace ReShifted
             if (shortRPM * p.drop[gear] < minLanding) shortRPM = minLanding / p.drop[gear];
             if (shortRPM > sport * 0.80f) shortRPM = sport * 0.80f;
 
-            // Up to 25% throttle: short-shift. From 85%: full sport point. Smooth blend between.
-            // Recent hard driving keeps the shift point up even while the throttle is closed,
-            // so a gear picked while coasting into a corner is not thrown away on the way out.
-            const float gas = ShiftProfile::Clamp(rawGas, 0.0f, 1.0f);
-            float eff = (gas > demand) ? gas : demand;
-            if (sportiness > eff) eff = sportiness;
-            const float t = ShiftProfile::Clamp((eff - 0.25f) / 0.60f, 0.0f, 1.0f);
-            return ShiftProfile::Lerp(shortRPM, sport, t * t * (3.0f - 2.0f * t));
+            // Up to the eco throttle: short-shift. From the sport throttle: full sport point.
+            // Smooth blend between. Recent hard driving keeps the shift point up even while the
+            // throttle is closed, so a gear picked while coasting into a corner is not thrown
+            // away on the way out.
+            return ShiftProfile::Lerp(shortRPM, sport, ShiftLevel(cfg, ShiftProfile::Clamp(rawGas, 0.0f, 1.0f)));
         }
 
         // RPM below which gear g shifts down.
@@ -206,8 +244,10 @@ namespace ReShifted
             // holding the gear to near idle. After calm driving the lower gear lands low in the
             // rev range; after hard driving it lands at up to 60% of its sport point, so the
             // car is in the right gear when the throttle comes back.
-            const float coast = ShiftProfile::Lerp(p.idleRPM + span * 0.16f, lowerSport * 0.60f * d, sportiness);
-            if (coast > target) target = coast;
+            if (cfg.coastDownshift) {
+                const float coast = ShiftProfile::Lerp(p.idleRPM + span * 0.16f, lowerSport * 0.60f * d, sportiness);
+                if (coast > target) target = coast;
+            }
 
             // Hysteresis: never drop a gear if the lower gear would be at (or within 18% of)
             // its own upshift point, because it would shift straight back up. The same 18%
@@ -223,6 +263,25 @@ namespace ReShifted
             }
 
             return (target > lug) ? target : lug;
+        }
+
+        // The gear a downshift from 'gear' should end in. Normally gear - 1; when the revs are so
+        // low that the next gear down would be asked to shift down again right away (flooring it
+        // at low revs in a high gear), it goes further in one step. Every step uses the normal
+        // downshift threshold, so the same landing limits and hysteresis apply to the final gear.
+        int ComputeDownshiftTarget(const ShiftProfile& p, const Config& cfg, int gear,
+                                   float currentRPM, float rawGas, float rawBrake) const
+        {
+            int target = gear - 1;
+            if (!cfg.skipGears || gear <= 3 || gear >= kMaxGears) return target;
+
+            float rpm = currentRPM / p.drop[gear - 1]; // RPM after landing in 'target'
+            while (target > 2 && gear - target < 3 &&
+                   rpm <= ComputeDownshiftRPM(p, cfg, target, rawGas, rawBrake)) {
+                rpm /= p.drop[target - 1];
+                --target;
+            }
+            return target;
         }
 
         // Returns 0 = stay, 1 = shift down, 2 = shift up (the game's own shift-potential values).
@@ -245,7 +304,7 @@ namespace ReShifted
 
             if (gear < p.topGear && rawBrake < 0.02f && currentRPM >= upshiftRPM) {
                 const bool pedalOk = rawGas > 0.03f || atLimiter;
-                const bool lockedOut = (lastShiftDir < 0 && sinceShift < kShiftLockSec && !atLimiter);
+                const bool lockedOut = (lastShiftDir < 0 && sinceShift < ShiftLockSec() && !atLimiter);
                 // Same idea as the stock gearbox: no upshift while the wheels spin far ahead of the road speed.
                 const bool gripOk = !(wheelGuard > 0.0f && wheelGuard <= 1.0f) ||
                                     wheelRPM >= wheelGuard * upshiftRPM;
@@ -255,7 +314,7 @@ namespace ReShifted
             }
 
             if (gear > 2 && currentRPM <= downshiftRPM) {
-                const bool lockedOut = (lastShiftDir > 0 && sinceShift < kShiftLockSec);
+                const bool lockedOut = (lastShiftDir > 0 && sinceShift < ShiftLockSec());
                 if (!lockedOut) {
                     return 1;
                 }
@@ -268,6 +327,8 @@ namespace ReShifted
         float sportiness = 0.0f;
         float prevGas = 0.0f;
         float holdTimer = 0.0f;
+        float level = 0.0f;
+        bool sportMode = false;
         int lastGear = -1;
         int lastShiftDir = 0;
         float sinceShift = 10.0f;

@@ -30,6 +30,7 @@ set(CLIENT_SOURCES
     src/game/atmosphere.cpp
     src/game/auto_login.cpp
     src/game/borderless.cpp
+    src/game/camera_orbit.cpp
     src/game/car.cpp
     src/game/car_lock.cpp
     src/game/d3d_hooks.cpp
