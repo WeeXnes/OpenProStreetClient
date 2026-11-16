@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <algorithm>
 #include <deque>
 
 #include "imgui.h"
@@ -43,6 +44,7 @@ namespace Overlay
     {
         std::string kind, title;
         std::vector<std::string> lines;
+        XpGain xp; // gained is 0 when the notice has no level bar
         double duration = 7.0;
         double shownAt = -1.0; // seconds on the overlay's clock, set when first drawn
     };
@@ -692,6 +694,222 @@ namespace Overlay
         return kind == "record" ? Gold : kind == "best" ? Success : kind == "not_counted" ? Warning : kind == "refused" ? Danger : Text2;
     }
 
+    // ---- The level bar ----
+    //
+    // Everything about it follows from the notice's age, so it needs no state of its own: the bar
+    // waits a moment, then fills from the XP the player had to the XP they have now, easing out, and
+    // passes through every level on the way. The popup opens when the bar passes into a new level.
+
+    static const double XP_FILL_DELAY = 0.8;    // after the notice appears
+    static const double XP_FILL_SECONDS = 1.8;  // for the first level, plus XP_LEVEL_SECONDS per level passed
+    static const double XP_LEVEL_SECONDS = 0.5;
+    static const double LEVEL_UP_SECONDS = 4.5; // how long the popup stays
+
+    static double XpFillSeconds(const XpGain& xp)
+    {
+        return XP_FILL_SECONDS + XP_LEVEL_SECONDS * static_cast<double>(xp.levelStarts.size() - 2);
+    }
+
+    static double XpFillEnd(const XpGain& xp) { return XP_FILL_DELAY + XpFillSeconds(xp); }
+
+    static double EaseOut(double p) { return 1.0 - (1.0 - p) * (1.0 - p) * (1.0 - p); }
+
+    // The XP the bar shows at this age of the notice.
+    static double XpShownAt(const XpGain& xp, double age)
+    {
+        double p = (age - XP_FILL_DELAY) / XpFillSeconds(xp);
+        if (p < 0.0) p = 0.0;
+        if (p > 1.0) p = 1.0;
+        return static_cast<double>(xp.total - xp.gained) + xp.gained * EaseOut(p);
+    }
+
+    // Which of levelStarts the shown XP is in: 0 for the level the player had before the race.
+    static size_t XpLevelIndex(const XpGain& xp, double shown)
+    {
+        size_t i = 0;
+        while (i + 2 < xp.levelStarts.size() && shown >= static_cast<double>(xp.levelStarts[i + 1])) ++i;
+        return i;
+    }
+
+    // The age at which the bar passes into the first new level, or -1 when the race earned none.
+    static double LevelUpAge(const XpGain& xp)
+    {
+        if (xp.gained <= 0 || xp.levelStarts.size() <= 2) return -1.0;
+        double share = static_cast<double>(xp.levelStarts[1] - (xp.total - xp.gained)) / xp.gained;
+        if (share < 0.0) share = 0.0;
+        if (share > 1.0) share = 1.0;
+        return XP_FILL_DELAY + (1.0 - std::cbrt(1.0 - share)) * XpFillSeconds(xp);
+    }
+
+    // The racing teams, one per race type, in the colours the stats site gives them.
+    struct TeamStyle
+    {
+        const char* family;
+        const char* label; // "Drift", for "+180 Drift XP"
+        const char* team;
+        const char* king;
+        ImVec4      colour;
+    };
+
+    static const TeamStyle* TeamStyleOf(const std::string& family)
+    {
+        static const TeamStyle styles[] = {
+            {"grip", "Grip", "G-Effect", "Grip King", Info},
+            {"drift", "Drift", "Noise Bomb", "Drift King", Success},
+            {"drag", "Drag", "Rogue Speed", "Drag King", ImVec4(0.831f, 0.831f, 0.831f, 1.0f)},
+            {"speed", "Speed", "Nitrocide", "Speed King", ImVec4(0.973f, 0.443f, 0.443f, 1.0f)},
+        };
+        for (const TeamStyle& style : styles)
+            if (family == style.family) return &style;
+        return nullptr;
+    }
+
+    static std::string FormatXp(long long value)
+    {
+        std::string digits = std::to_string(value < 0 ? -value : value);
+        for (int at = static_cast<int>(digits.size()) - 3; at > 0; at -= 3) digits.insert(static_cast<size_t>(at), ",");
+        return value < 0 ? "-" + digits : digits;
+    }
+
+    // Under a notice: the level, the XP counting up, and the bar filling.
+    static void DrawXpBar(const XpGain& xp, double age, float alpha, float s)
+    {
+        const double shown = XpShownAt(xp, age);
+        const size_t index = XpLevelIndex(xp, shown);
+        const int level = xp.levelBefore + static_cast<int>(index);
+        const double start = static_cast<double>(xp.levelStarts[index]);
+        const double next = static_cast<double>(xp.levelStarts[index + 1]);
+        float fill = next > start ? static_cast<float>((shown - start) / (next - start)) : 1.0f;
+        if (fill < 0.0f) fill = 0.0f;
+        if (fill > 1.0f) fill = 1.0f;
+        const bool levelledUp = index > 0;
+        const ImVec4 barColour = levelledUp ? Gold : Info;
+        const auto faded = [alpha](const ImVec4& c) { return ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, c.w * alpha)); };
+
+        ImGui::Dummy(ImVec2(0.0f, 6.0f * s));
+        ImGui::PushFont(g_fontSmall);
+        const float left = ImGui::GetCursorPosX() + 14.0f * s;
+        ImGui::SetCursorPosX(left);
+        ImGui::TextColored(levelledUp ? Gold : Text1, "Level %d", level);
+        const std::string gained = "+" + FormatXp(static_cast<long long>(shown - (xp.total - xp.gained) + 0.5)) + " XP";
+        const float gainedWidth = ImGui::CalcTextSize(gained.c_str()).x;
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::SetCursorPosX((std::max)(ImGui::GetCursorPosX() + 12.0f * s, (ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x) - gainedWidth));
+        ImGui::TextColored(Success, "%s", gained.c_str());
+
+        ImGui::SetCursorPosX(left);
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        const float width = (std::max)(160.0f * s, (ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x) - left);
+        const float height = 6.0f * s;
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->AddRectFilled(at, ImVec2(at.x + width, at.y + height), faded(Line), height);
+        if (fill > 0.0f) draw->AddRectFilled(at, ImVec2(at.x + width * fill, at.y + height), faded(barColour), height);
+        // A bright edge on the moving end while it fills.
+        if (fill > 0.02f && fill < 1.0f && age < XpFillEnd(xp))
+            draw->AddCircleFilled(ImVec2(at.x + width * fill, at.y + height * 0.5f), height * 0.75f, faded(Text1));
+        ImGui::Dummy(ImVec2(width, height));
+
+        ImGui::SetCursorPosX(left);
+        if (next > start)
+            ImGui::TextColored(Text3, "%s / %s XP   %s to level %d", FormatXp(static_cast<long long>(shown + 0.5)).c_str(),
+                               FormatXp(static_cast<long long>(next)).c_str(), FormatXp(static_cast<long long>(next - shown + 0.5)).c_str(), level + 1);
+        else
+            ImGui::TextColored(Text3, "%s XP   top level", FormatXp(static_cast<long long>(shown + 0.5)).c_str());
+
+        // The race type's pool: the same XP, counting up with the bar, and the place in it on the server.
+        const TeamStyle* team = TeamStyleOf(xp.family);
+        if (team)
+        {
+            const double earned = shown - static_cast<double>(xp.total - xp.gained);
+            const long long poolShown = xp.pool - xp.gained + static_cast<long long>(earned + 0.5);
+            ImGui::Dummy(ImVec2(0.0f, 4.0f * s));
+            ImGui::SetCursorPosX(left);
+            const ImVec2 dotAt = ImGui::GetCursorScreenPos();
+            const float lineHeight = ImGui::GetTextLineHeight();
+            draw->AddCircleFilled(ImVec2(dotAt.x + 3.0f * s, dotAt.y + lineHeight * 0.5f), 3.0f * s, faded(team->colour));
+            ImGui::SetCursorPosX(left + 12.0f * s);
+            ImGui::TextColored(team->colour, "+%s %s XP", FormatXp(static_cast<long long>(earned + 0.5)).c_str(), team->label);
+            ImGui::SameLine(0.0f, 10.0f * s);
+            if (xp.poolRank > 0)
+                ImGui::TextColored(Text3, "%s   #%d on the server", FormatXp(poolShown).c_str(), xp.poolRank);
+            else
+                ImGui::TextColored(Text3, "%s", FormatXp(poolShown).c_str());
+
+            // Once the bar is full: a new team, or a new crown.
+            if (age >= XpFillEnd(xp))
+            {
+                const TeamStyle* joined = xp.joinedTeam ? TeamStyleOf(xp.team) : nullptr;
+                if (joined)
+                {
+                    ImGui::SetCursorPosX(left + 12.0f * s);
+                    ImGui::TextColored(joined->colour, "You joined %s", joined->team);
+                }
+                if (xp.crowned)
+                {
+                    ImGui::SetCursorPosX(left + 12.0f * s);
+                    ImGui::TextColored(Gold, "You're the new %s", team->king);
+                }
+            }
+        }
+        ImGui::PopFont();
+    }
+
+    // A level up: a card in the middle of the screen, from when the bar passes into the new level.
+    static void DrawLevelUp(const XpGain& xp, double age, float s)
+    {
+        const double since = age - LevelUpAge(xp);
+        if (since < 0.0 || since > LEVEL_UP_SECONDS) return;
+        float alpha = 1.0f;
+        if (since < 0.2) alpha = static_cast<float>(since / 0.2);
+        else if (since > LEVEL_UP_SECONDS - 0.5) alpha = static_cast<float>((LEVEL_UP_SECONDS - since) / 0.5);
+        // It counts on with the bar when the race passed more than one level.
+        const int level = xp.levelBefore + static_cast<int>(XpLevelIndex(xp, XpShownAt(xp, age)));
+        const auto faded = [alpha](const ImVec4& c, float a = 1.0f) { return ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, c.w * alpha * a)); };
+
+        const ImVec2 display = ImGui::GetIO().DisplaySize;
+        ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.30f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowBgAlpha(Surface.w * alpha);
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(Gold.x, Gold.y, Gold.z, 0.6f));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(280.0f * s, 0.0f), ImVec2(420.0f * s, display.y));
+        if (ImGui::Begin("##levelup", nullptr, PanelFlags))
+        {
+            ImDrawList* draw = ImGui::GetWindowDrawList();
+            const float width = ImGui::GetContentRegionAvail().x;
+
+            ImGui::PushFont(g_fontSmall);
+            const char* heading = "LEVEL UP";
+            const float headingWidth = ImGui::CalcTextSize(heading).x;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (width - headingWidth) * 0.5f);
+            ImGui::TextColored(Gold, "%s", heading);
+            ImGui::PopFont();
+
+            // The new level, large, with a ring that spreads out from it as it arrives.
+            ImGui::PushFont(g_fontBody);
+            const float size = ImGui::GetFontSize() * 2.8f;
+            const std::string number = std::to_string(level);
+            const ImVec2 numberSize = g_fontBody->CalcTextSizeA(size, FLT_MAX, 0.0f, number.c_str());
+            const ImVec2 at = ImGui::GetCursorScreenPos();
+            const ImVec2 centre(at.x + width * 0.5f, at.y + numberSize.y * 0.5f);
+            const float ring = static_cast<float>(since < 0.8 ? since / 0.8 : 1.0);
+            if (ring < 1.0f)
+                draw->AddCircle(centre, numberSize.y * (0.5f + ring * 0.9f), faded(Gold, 1.0f - ring), 48, 2.0f * s);
+            draw->AddCircleFilled(centre, numberSize.y * 0.62f, faded(Gold, 0.12f), 48);
+            draw->AddText(g_fontBody, size, ImVec2(centre.x - numberSize.x * 0.5f, at.y), faded(Text1), number.c_str());
+            ImGui::Dummy(ImVec2(width, numberSize.y));
+            ImGui::PopFont();
+
+            ImGui::PushFont(g_fontSmall);
+            const std::string line = "You reached level " + number;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (width - ImGui::CalcTextSize(line.c_str()).x) * 0.5f);
+            ImGui::TextColored(Text2, "%s", line.c_str());
+            ImGui::PopFont();
+        }
+        ImGui::End();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
+    }
+
     // Short notifications, top centre, newest at the top. Each fades in, stays, and fades out.
     static void DrawNotices(std::vector<Notice>& notices, double now, float s)
     {
@@ -731,10 +949,18 @@ namespace Overlay
                     ImGui::TextColored(Text2, "%s", line.c_str());
                 }
                 ImGui::PopFont();
+                if (n.xp.gained > 0) DrawXpBar(n.xp, age, alpha, s);
                 y += ImGui::GetWindowHeight() + 8.0f * s;
             }
             ImGui::End();
             ImGui::PopStyleVar();
+        }
+        // One popup at a time: the newest level up.
+        for (const Notice& n : notices)
+        {
+            if (n.xp.gained <= 0 || LevelUpAge(n.xp) < 0.0) continue;
+            const double age = now - n.shownAt;
+            if (age >= LevelUpAge(n.xp) && age <= LevelUpAge(n.xp) + LEVEL_UP_SECONDS) { DrawLevelUp(n.xp, age, s); break; }
         }
     }
 
@@ -1220,7 +1446,7 @@ namespace Overlay
         g_noticeQueue.push_front(n);
     }
 
-    void PushNotice(const std::string& kind, const std::string& title, const std::vector<std::string>& lines)
+    void PushNotice(const std::string& kind, const std::string& title, const std::vector<std::string>& lines, const XpGain& xp)
     {
         if (!g_enabled) return;
         Guard guard;
@@ -1228,6 +1454,9 @@ namespace Overlay
         n.kind = kind;
         n.title = title;
         n.lines = lines;
+        n.xp = xp;
+        // Long enough to watch the bar fill, and the level up popup that goes with it.
+        if (xp.gained > 0) n.duration = XpFillEnd(xp) + (xp.levelStarts.size() > 2 ? LEVEL_UP_SECONDS : 3.0);
         g_noticeQueue.push_back(n);
         // The result changes the standing, so the card asks again on the next poll.
         g_requestedTrack.clear();

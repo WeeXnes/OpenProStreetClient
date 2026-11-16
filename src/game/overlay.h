@@ -32,7 +32,26 @@ namespace Overlay
 
     // From the server.
     void SetStanding(const std::string& trackKey, const std::string& raceMode, const std::vector<Board>& boards);
-    void PushNotice(const std::string& kind, const std::string& title, const std::vector<std::string>& lines);
+    // The XP a race earned, shown under its notice as the level bar filling up, with a level up
+    // popup when it passes into a new level. levelStarts holds the XP each level starts at, from
+    // levelBefore to the level after the one the player has now.
+    struct XpGain
+    {
+        int                    gained = 0;
+        long long              total = 0;
+        int                    levelBefore = 0;
+        std::vector<long long> levelStarts;
+        // The race type's pool the same XP went to (grip, drift, drag or speed; empty from servers
+        // before 1.27), the XP in it now, the place in it on the server, and the player's team.
+        std::string            family;
+        long long              pool = 0;
+        int                    poolRank = 0;
+        std::string            team;
+        bool                   joinedTeam = false;
+        bool                   crowned = false; // the race made them the pool's king
+    };
+    void PushNotice(const std::string& kind, const std::string& title, const std::vector<std::string>& lines,
+                    const XpGain& xp = XpGain());
     // Who is in the room and the car each picked (empty while picking), shown while not racing. An
     // empty list hides the card.
     struct LobbyPlayer

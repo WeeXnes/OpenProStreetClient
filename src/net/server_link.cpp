@@ -258,7 +258,26 @@ namespace ServerLink
             if (title == "Client update required") {
                 if (!g_helloRejected) Overlay::OnConnectionRefused(title, lines);
             } else {
-                Overlay::PushNotice(ParamValue(xml, "kind"), title, lines);
+                // From server 1.27: the XP the race earned, for the level bar.
+                Overlay::XpGain xp;
+                xp.gained = atoi(ParamValue(xml, "xp").c_str());
+                xp.total = _atoi64(ParamValue(xml, "xpTotal").c_str());
+                xp.levelBefore = atoi(ParamValue(xml, "level").c_str());
+                const std::string starts = ParamValue(xml, "levelStarts");
+                for (size_t at = 0; at < starts.size() && xp.levelStarts.size() < 100;) {
+                    const size_t comma = starts.find(',', at);
+                    xp.levelStarts.push_back(_atoi64(starts.substr(at, comma == std::string::npos ? std::string::npos : comma - at).c_str()));
+                    if (comma == std::string::npos) break;
+                    at = comma + 1;
+                }
+                xp.family = ParamValue(xml, "family");
+                xp.pool = _atoi64(ParamValue(xml, "pool").c_str());
+                xp.poolRank = atoi(ParamValue(xml, "poolRank").c_str());
+                xp.team = ParamValue(xml, "team");
+                xp.joinedTeam = ParamValue(xml, "joined") == "1";
+                xp.crowned = ParamValue(xml, "crowned") == "1";
+                if (xp.gained <= 0 || xp.levelBefore <= 0 || xp.levelStarts.size() < 2) xp = Overlay::XpGain();
+                Overlay::PushNotice(ParamValue(xml, "kind"), title, lines, xp);
             }
         }
         // Where the player stands on the event they're racing.
