@@ -32,6 +32,13 @@ namespace Overlay
 
     // From the server.
     void SetStanding(const std::string& trackKey, const std::string& raceMode, const std::vector<Board>& boards);
+    // A heat the local player just finished, before the server has counted it: a time or score
+    // better than their best on the card becomes their best at once, so the next heat or lap
+    // chases it. The server's answer replaces it when it comes.
+    void ApplyLocalResult(const std::string& trackKey, const std::string& raceMode, float raceTime, float bestLap,
+                          int laps, float score, float topSpeedKmh);
+    // Asks the server where the player stands again, as after it counted a result.
+    void RefreshStanding();
     // The XP a race earned, shown under its notice as the level bar filling up, with a level up
     // popup when it passes into a new level. levelStarts holds the XP each level starts at, from
     // levelBefore to the level after the one the player has now.

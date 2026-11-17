@@ -278,6 +278,8 @@ namespace ServerLink
                 xp.crowned = ParamValue(xml, "crowned") == "1";
                 if (xp.gained <= 0 || xp.levelBefore <= 0 || xp.levelStarts.size() < 2) xp = Overlay::XpGain();
                 Overlay::PushNotice(ParamValue(xml, "kind"), title, lines, xp);
+                // The server just counted a result, so the card's times may have changed.
+                Overlay::RefreshStanding();
             }
         }
         // Where the player stands on the event they're racing.

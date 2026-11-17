@@ -378,6 +378,12 @@ namespace Overlay
             else if (board->beat > 0.0) { target = board->beat; targetLabel = "To beat"; }
             else if (board->record > 0.0) { target = board->record; targetLabel = "#1 Record"; }
         }
+        // A lap in this race already beat it: the next lap chases that one.
+        if (metric == "best_lap" && !oneLapRace && pace.bestLap > 0.0f && (target <= 0.0 || pace.bestLap < target))
+        {
+            target = pace.bestLap;
+            targetLabel = "New PB";
+        }
 
         double current = 0.0;
         const char* heading = "LIVE PACE";
@@ -1470,6 +1476,40 @@ namespace Overlay
         g_standingTrack = trackKey;
         g_standingMode = raceMode;
         g_boards = boards;
+    }
+
+    void ApplyLocalResult(const std::string& trackKey, const std::string& raceMode, float raceTime, float bestLap,
+                          int laps, float score, float topSpeedKmh)
+    {
+        Guard guard;
+        if (trackKey.empty() || trackKey != g_standingTrack || raceMode != g_standingMode) return;
+        for (Board& b : g_boards)
+        {
+            double value = 0.0;
+            bool higher = false;
+            if (b.metric == "best_lap") value = bestLap;
+            else if (b.metric == "race_time" && b.laps == laps) value = raceTime;
+            else if (b.metric == "score") { value = score; higher = true; }
+            else if (b.metric == "top_speed") { value = topSpeedKmh; higher = true; }
+            if (!(value > 0.0) || !std::isfinite(value)) continue;
+            if (b.best > 0.0 && (higher ? value <= b.best : value >= b.best)) continue;
+            b.best = value;
+            if (b.record <= 0.0 || (higher ? value > b.record : value < b.record))
+            {
+                b.record = value;
+                b.recordHolder = "You";
+                b.place = 1;
+                b.beat = 0.0;
+                b.beatHolder.clear();
+            }
+        }
+    }
+
+    void RefreshStanding()
+    {
+        Guard guard;
+        g_requestedTrack.clear();
+        g_requestedMode.clear();
     }
 
     void OnConnected()

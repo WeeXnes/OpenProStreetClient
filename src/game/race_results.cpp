@@ -27,6 +27,18 @@ namespace RaceResults
     static void* g_origSetPoints = nullptr;
     static void* g_origLapChanged = nullptr;
     static void* g_origGetRemainingSeconds = nullptr;
+    static void* g_origRacerFinished = nullptr;
+
+    // The local racer's numbers in the last report sent, so the results screen doesn't send the
+    // same heat again after it was reported when the racer crossed the line.
+    struct SentHeat {
+        bool    valid = false;
+        float   raceTime = 0.0f;
+        int32_t laps = 0;
+        float   score = 0.0f;
+        float   bestLap = 0.0f;
+    };
+    static SentHeat g_sentHeat;
 
     static CRITICAL_SECTION g_paceLock;
     static bool g_paceLockReady = false;
@@ -221,6 +233,46 @@ namespace RaceResults
         file.flush();
     }
 
+    static bool SameAsSent(uintptr_t racer)
+    {
+        return g_sentHeat.valid &&
+               g_sentHeat.raceTime == *(float*)(racer + RACER_RACE_TIME_SNAPSHOT) &&
+               g_sentHeat.laps == *(int32_t*)(racer + RACER_LAPS_COMPLETED) &&
+               g_sentHeat.score == *(float*)(racer + RACER_SCORE) &&
+               g_sentHeat.bestLap == *(float*)(racer + RACER_BEST_LAP);
+    }
+
+    // Sends one heat to the server. The numbers are the racer's own fields, the ones the game sends
+    // the server in OLMSG_RacerFinished (GRacerInfo +0x68 onwards), so the server can check them
+    // against its own copy.
+    static void SubmitHeat(uintptr_t racer, const RaceResult& res, const std::vector<float>& lapTimes)
+    {
+        ServerLink::RaceReport report;
+        report.trackKey = res.trackKey;
+        report.trackName = res.trackName;
+        report.raceMode = res.raceMode;
+        report.carKey = res.carKey;
+        report.position = res.position;
+        report.raceTime = *(float*)(racer + RACER_RACE_TIME_SNAPSHOT);
+        report.bestLap = *(float*)(racer + RACER_BEST_LAP);
+        report.score = *(float*)(racer + RACER_SCORE);
+        report.lapsCompleted = *(int32_t*)(racer + RACER_LAPS_COMPLETED);
+        report.lapTimes = lapTimes;
+        report.gameFiles = VaultFixes::FilesHash();
+        report.speedLimit = VaultFixes::SpeedLimit();
+        ServerLink::SubmitRaceResult(report);
+
+        g_sentHeat.valid = true;
+        g_sentHeat.raceTime = report.raceTime;
+        g_sentHeat.laps = report.lapsCompleted;
+        g_sentHeat.score = report.score;
+        g_sentHeat.bestLap = report.bestLap;
+
+        float topSpeedMs = *(float*)(racer + RACER_TOP_SPEED_MS);
+        Overlay::ApplyLocalResult(res.trackKey, res.raceMode, report.raceTime, report.bestLap, report.lapsCompleted, report.score,
+                                  (topSpeedMs > 0.0f && topSpeedMs < 200.0f) ? topSpeedMs * 3.6f : 0.0f);
+    }
+
     static void ProcessPostRaceResults(uintptr_t baseModule, uint32_t screenId)
     {
         time_t now = time(nullptr);
@@ -413,22 +465,14 @@ namespace RaceResults
         // Save JSONL record
         SaveRaceResultToJson(res);
 
-        // These are the racer's own fields, the ones the game sends the server in OLMSG_RacerFinished
-        // (GRacerInfo +0x68 onwards), so the server can check them against its own copy.
-        ServerLink::RaceReport report;
-        report.trackKey = res.trackKey;
-        report.trackName = res.trackName;
-        report.raceMode = res.raceMode;
-        report.carKey = res.carKey;
-        report.position = res.position;
-        report.raceTime = raceTimeSnapshot;
-        report.bestLap = *(float*)(playerRacer + RACER_BEST_LAP);
-        report.score = *(float*)(playerRacer + RACER_SCORE);
-        report.lapsCompleted = *(int32_t*)(playerRacer + RACER_LAPS_COMPLETED);
-        report.lapTimes = isDrag ? res.heatTimes : res.lapTimes;
-        report.gameFiles = VaultFixes::FilesHash();
-        report.speedLimit = VaultFixes::SpeedLimit();
-        ServerLink::SubmitRaceResult(report);
+        // The last heat was normally reported when the racer crossed the line (RacerFinished_Hook).
+        // Reporting it again would leave a second report waiting on the server for a heat that
+        // doesn't come, so only a heat that wasn't reported yet goes now.
+        if (SameAsSent(playerRacer)) {
+            Log::Debug("[OpenProStreet] This heat was already reported when it finished.\n");
+            return;
+        }
+        SubmitHeat(playerRacer, res, isDrag ? res.heatTimes : res.lapTimes);
     }
 
     static void __attribute__((thiscall)) FePostRaceRewards_PopulateData_Hook(void* thisPtr, void* pParam)
@@ -531,6 +575,45 @@ namespace RaceResults
         ProcessPostRaceResults(g_baseModule, screenId);
 
         reinterpret_cast<void(__attribute__((thiscall))*)(void*)>(g_origOnlineHandleScreenConstructed)(thisPtr);
+    }
+
+    // The game's handler for a racer finishing an online heat (0x00673B90). It sends that racer's
+    // OLMSG_RacerFinished to the server, copied from GRacerInfo +0x68. When it's the local racer, the
+    // heat is reported right away, with the same numbers, so every finished heat counts even if the
+    // event never reaches its results screen (a disconnect, a crash, quitting between heats).
+    static void __attribute__((thiscall)) RacerFinished_Hook(void* thisPtr, void* message)
+    {
+        uint32_t handle = 0;
+        if (message && !IsBadReadPtr((uint8_t*)message + 0x10, sizeof(uint32_t))) handle = *(uint32_t*)((uint8_t*)message + 0x10);
+
+        reinterpret_cast<void(__attribute__((thiscall))*)(void*, void*)>(g_origRacerFinished)(thisPtr, message);
+
+        uintptr_t gRaceStatusBase = g_baseModule + 0x6B9D7C;
+        if (handle == 0 || IsBadReadPtr((void*)gRaceStatusBase, sizeof(uintptr_t)) != 0) return;
+        uintptr_t racer = FindLocalRacer(g_baseModule, *(uintptr_t*)gRaceStatusBase);
+        if (!racer || *(uint32_t*)(racer + RACER_SIMABLE_HANDLE) != handle || SameAsSent(racer)) return;
+
+        RaceResult res;
+        res.trackKey = ReadRawMapIdentifier(g_baseModule);
+        const std::string displayMap = TranslateMapIdentifier(res.trackKey);
+        res.trackName = displayMap.empty() ? res.trackKey : displayMap;
+        res.raceMode = ReadRaceMode(g_baseModule);
+        res.carKey = ReadRawCarIdentifier(g_baseModule);
+        if (res.trackKey.empty() || res.raceMode.empty()) {
+            Log::Debug("[OpenProStreet] Heat finished, but the track or mode is unknown; the results screen reports it.\n");
+            return;
+        }
+        int rank = *(int32_t*)(racer + RACER_RANK);
+        res.position = (rank >= 1 && rank <= MAX_RACERS) ? rank : 0;
+
+        // The lap that just ended may not have reached LapChanged_Hook yet.
+        std::vector<float> lapTimes = g_localLapTimes;
+        int laps = *(int32_t*)(racer + RACER_LAPS_COMPLETED);
+        float lastLap = *(float*)(racer + RACER_LAST_LAP);
+        if (laps > 0 && (int)lapTimes.size() < laps && lastLap > 0.1f && lastLap < 3600.0f) lapTimes.push_back(lastLap);
+
+        Log::Debug("[OpenProStreet] Heat finished on %s (%s): reporting it now.\n", res.trackName.c_str(), res.raceMode.c_str());
+        SubmitHeat(racer, res, lapTimes);
     }
 
     static float ReadTimer(uintptr_t racer, uintptr_t startOff, uintptr_t accumOff, uintptr_t runOff, float worldTime, bool* isRunning)
@@ -647,6 +730,11 @@ namespace RaceResults
 
         if (Hooks::InstallDetour((void*)loc_695DE0, (void*)LapChanged_Hook, &g_origLapChanged, 7)) {
             Log::Debug("[OpenProStreet] Lap hook installed at 0x%p\n", (void*)loc_695DE0);
+        }
+
+        uintptr_t loc_673B90 = baseModule + 0x273B90;
+        if (Hooks::InstallDetour((void*)loc_673B90, (void*)RacerFinished_Hook, &g_origRacerFinished, 7)) {
+            Log::Debug("[OpenProStreet] Racer finished hook installed at 0x%p\n", (void*)loc_673B90);
         }
 
         uintptr_t loc_7B8B00 = baseModule + 0x3B8B00;
