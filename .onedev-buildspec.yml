@@ -1,6 +1,8 @@
-version: 43
+version: 59
 jobs:
 - name: Get Version (private)
+  executeInSandbox: false
+  jobExecutor: Builder
   steps:
   - type: CheckoutStep
     name: checkout code
@@ -14,11 +16,13 @@ jobs:
     name: get version
     runInContainer: false
     interpreter:
-      type: DefaultInterpreter
+      type: PosixInterpreter
+      shell: sh
       commands: |
         echo "Extracting version from src/main.cpp..."
         grep -oP 'const std::string version = "\K[^"]+' src/main.cpp > version.txt || echo "1.0" > version.txt
         echo "Version extracted: $(cat version.txt)"
+    runAs: 0:0
     useTTY: true
     condition: SUCCESSFUL
     optional: false
@@ -26,7 +30,8 @@ jobs:
     name: check if tag exists
     runInContainer: false
     interpreter:
-      type: DefaultInterpreter
+      type: PosixInterpreter
+      shell: sh
       commands: |
         version=$(cat version.txt)
         echo "Checking if tag '$version' exists on origin..."
@@ -43,6 +48,7 @@ jobs:
             echo "Tag '$version' does not exist. Proceeding with original version."
             exit 0
         fi
+    runAs: 0:0
     useTTY: true
     condition: SUCCESSFUL
     optional: false
@@ -57,16 +63,19 @@ jobs:
     tagMessage: Release Tag for @file:version.txt@
     condition: SUCCESSFUL
     optional: false
-  jobExecutor: Builder
   triggers:
   - type: BranchUpdateTrigger
     userMatch: anyone
   - type: PullRequestUpdateTrigger
   retryCondition: never
-  maxRetries: 3
+  maxAttempts: 4
   retryDelay: 30
+  includeUpstreamWhenRebuild: false
+  includeDownstreamWhenRebuild: false
   timeout: 14400
 - name: Build Release Tag
+  executeInSandbox: false
+  jobExecutor: Builder
   steps:
   - type: CheckoutStep
     name: checkout code
@@ -85,7 +94,8 @@ jobs:
     name: Cross-Compile Windows x86 ASI Plugin
     runInContainer: false
     interpreter:
-      type: DefaultInterpreter
+      type: PosixInterpreter
+      shell: sh
       commands: |
         chmod +x ./build.sh
         ./build.sh
@@ -93,6 +103,7 @@ jobs:
         cp build/OpenProStreetClient.asi ./release/
         cp build/discord_game_sdk.dll ./release/
         cp build/OpenProStreetClient_v*.zip ./release/
+    runAs: 0:0
     useTTY: true
     condition: ALWAYS
     optional: false
@@ -102,14 +113,17 @@ jobs:
     artifacts: '**'
     condition: ALWAYS
     optional: false
-  jobExecutor: Builder
   triggers:
   - type: TagCreateTrigger
   retryCondition: never
-  maxRetries: 3
+  maxAttempts: 4
   retryDelay: 30
+  includeUpstreamWhenRebuild: false
+  includeDownstreamWhenRebuild: false
   timeout: 14400
 - name: Verify
+  executeInSandbox: false
+  jobExecutor: Builder
   steps:
   - type: CheckoutStep
     name: checkout code
@@ -123,13 +137,15 @@ jobs:
     name: Cross-Compile Windows x86 ASI Plugin
     runInContainer: false
     interpreter:
-      type: DefaultInterpreter
+      type: PosixInterpreter
+      shell: sh
       commands: |
         set -e
         chmod +x ./build.sh
         ./build.sh
         mkdir -p ./verify
         cp build/OpenProStreetClient.asi build/OpenProStreetClient.asi.debug build/discord_game_sdk.dll ./verify/
+    runAs: 0:0
     useTTY: true
     condition: SUCCESSFUL
     optional: false
@@ -139,8 +155,32 @@ jobs:
     artifacts: '**'
     condition: SUCCESSFUL
     optional: false
-  jobExecutor: Builder
   retryCondition: never
-  maxRetries: 3
+  maxAttempts: 4
   retryDelay: 30
+  includeUpstreamWhenRebuild: false
+  includeDownstreamWhenRebuild: false
+  timeout: 3600
+- name: Mirror to GitHub
+  executeInSandbox: false
+  jobExecutor: Builder
+  steps:
+  - type: PushRepository
+    name: push to github.com/WeeXnes/OpenProStreetClient
+    remoteUrl: https://github.com/WeeXnes/OpenProStreetClient.git
+    userName: WeeXnes
+    passwordSecret: github-mirror-token
+    force: false
+    condition: SUCCESSFUL
+    optional: false
+  triggers:
+  - type: BranchUpdateTrigger
+    userMatch: anyone
+  - type: TagCreateTrigger
+    projects: OpenProStreetClient
+  retryCondition: never
+  maxAttempts: 4
+  retryDelay: 30
+  includeUpstreamWhenRebuild: false
+  includeDownstreamWhenRebuild: false
   timeout: 3600
