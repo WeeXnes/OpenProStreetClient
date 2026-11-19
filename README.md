@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/openprostreet.png" width="96" alt="" />
   <h1>OpenProStreet Client</h1>
-  <p>The game plugin for <a href="https://code.weexnes.dev/OpenProStreet">OpenProStreet</a> servers, for Need for Speed: ProStreet. Formerly ProStreetRPC.</p>
+  <p>The game plugin for OpenProStreet servers, for Need for Speed: ProStreet. Formerly ProStreetRPC.</p>
   <p>
     <a href="https://weexnes.dev/project/OpenProStreetClient#artifacts"><img src="https://img.shields.io/badge/download-latest-000000?style=flat-square&labelColor=1f1f1f" alt="Download" /></a>
     <a href="#requirements"><img src="https://img.shields.io/badge/platform-NFS%20ProStreet%201.1-000000?style=flat-square&labelColor=1f1f1f" alt="Platform" /></a>
@@ -172,7 +172,7 @@ The defaults also tint `cvInstanceWorldSunColour`, `cvAmbientColour`, `FogColor`
 
 ### Graphics and shaders
 
-The client can sharpen textures at distance with up to 16× anisotropic filtering on linear samplers (off unless you turn it on), and can swap the game's Direct3D 9 shaders at load time without editing `nfs.exe`. Replacement `.cso` shaders live in `scripts/OpenProStreetShaders/` and are named `<anything>-<16-hex-id>.cso`, matched by FNV-1a hash of the game's bytecode (listed by ProStreetOnline's `shaders/tools/split-shaders.js`):
+The client can sharpen textures at distance with up to 16× anisotropic filtering on linear samplers (off unless you turn it on), and can swap the game's Direct3D 9 shaders at load time without editing `nfs.exe`. Replacement `.cso` shaders live in `scripts/OpenProStreetShaders/` and are named `<anything>-<16-hex-id>.cso`, matched by FNV-1a hash of the game's bytecode:
 
 ```ini
 [Graphics]
@@ -274,7 +274,7 @@ bash build.sh
 
 Output binaries and the release zip are placed in `build/`.
 
-To test the encryption code against a server without the game, build `tests/` and run `secure_proxy`, then point OpenProStreet's `tests/race_test.js` at it with `PROXY_PORT`.
+To test the encryption code against a server without the game, build `tests/` and run `secure_proxy`.
 
 ### Windows native build (Visual Studio and vcpkg)
 
