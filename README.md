@@ -1,58 +1,57 @@
-# <img src="assets/openprostreet.png" width="36" height="36" align="top" alt=""> OpenProStreet Client
-
-> The game plugin for [OpenProStreet](https://code.weexnes.dev/OpenProStreet) servers, for Need for Speed: ProStreet. Formerly ProStreetRPC.
-
-[![Download Artifacts](https://img.shields.io/badge/Download-Artifacts-blue?style=for-the-badge&logo=package)](https://weexnes.dev/project/OpenProStreetClient#artifacts)
-[![Repository](https://img.shields.io/badge/Git-Repository-orange?style=for-the-badge&logo=git)](https://code.weexnes.dev/OpenProStreetClient)
-
----
-
-## 📦 Downloads & Releases
-
-Pre-compiled release bundles (`OpenProStreetClient_v*.zip`) containing the ASI plugin and `discord_game_sdk.dll` can be downloaded directly from:
-👉 **[https://weexnes.dev/project/OpenProStreetClient#artifacts](https://weexnes.dev/project/OpenProStreetClient#artifacts)**
+<div align="center">
+  <img src="assets/openprostreet.png" width="96" alt="" />
+  <h1>OpenProStreet Client</h1>
+  <p>The game plugin for <a href="https://code.weexnes.dev/OpenProStreet">OpenProStreet</a> servers, for Need for Speed: ProStreet. Formerly ProStreetRPC.</p>
+  <p>
+    <a href="https://weexnes.dev/project/OpenProStreetClient#artifacts"><img src="https://img.shields.io/badge/download-latest-000000?style=flat-square&labelColor=1f1f1f" alt="Download" /></a>
+    <a href="#requirements"><img src="https://img.shields.io/badge/platform-NFS%20ProStreet%201.1-000000?style=flat-square&labelColor=1f1f1f" alt="Platform" /></a>
+    <a href="#build-from-source"><img src="https://img.shields.io/badge/stack-C%2B%2B-000000?style=flat-square&labelColor=1f1f1f" alt="Stack" /></a>
+  </p>
+</div>
 
 ---
 
-## 🚀 Features
+## Features
 
-- **Secure Login**: Encrypts all traffic to an OpenProStreet server, so the game's password isn't sent in plaintext. Your name and password work on any PC. Older servers still work, without encryption.
-- **Race Results**: Sends your lap times, track, race mode and position to the server after each race, for records and leaderboards.
-- **Quick Play**: "Schnelles Spiel" no longer tries EA's closed servers. It logs in to the server and joins a quick play race day by itself. If none is running, the server starts one with a random location and events, with AI opponents. If there's still nothing to join a few seconds after the list shows, the list stays open, with the same race days as LAN play, and you pick one.
-- **Event Votes**: In a race day's lobby, F1 opens a window with the race day's events. Pick one with the arrow keys or the mouse and call a vote; the game doesn't get the keyboard or mouse while the window is open. Everyone in the room then votes with F1 (yes) or F2 (no). It passes with more than half of the room, the lobby countdown waits for it (20 seconds at most), and the event becomes the next one. Needs server 1.23. The keys are `Key` and `NoKey` under `[Vote]` in the ini, and `Enabled=0` turns it off.
-- **Dynamic Status**: Displays whether you are in a race day, navigating menus, or in career.
-- **Player Car Display**: Detects the car currently driven by the player and translates internal models to real vehicle names (e.g. "Nissan GT-R (R35)", "Mazda RX-7", "Chevrolet Corvette Z06", "Toyota Supra").
-- **Race Mode & Event Type**: Identifies specific race types (e.g. "Grip", "Drift", "1/4 Mile Drag", "Wheelie Competition", "Speed Challenge", "Top Speed Run", "Sector Shootout", "Time Attack", "Grip Class").
-- **Detailed Stats**: Shows your current career balance and Raceday XP (formatted with commas).
-- **Map Identification**: Detects the current track/map and translates internal identifiers to human-readable names (e.g. "Nevada Highway", "Chicago Airfield").
-- **Dynamic Cycle**: Automatically cycles Discord details line between track name, race type, current car, and Raceday XP during gameplay.
-- **Car Fixes Built In**: No tank slapper and no speed limiter on any car, the same changes the NFS-VltEd scripts "Tank Unslapper" and "Speed Limiter Removed" make, without VltEd. See [Car fixes](#car-fixes).
-- **Main Menu**: The "LAN Play" button reads "OpenProStreet" in every language, the copyright line shows the client version, and the game no longer tries to log in to EA (the "Connecting to EA server..." popup you had to cancel).
-- **Account Screen**: "Create new LAN account" and "Use existing LAN account" read "Create OpenProStreet account" and "Log in to OpenProStreet account", the title above them reads "OpenProStreet", and the messages around creating an account say OpenProStreet too.
-- **Safe Memory Management**: Validates pointers and handles memory reading safely to prevent game crashes.
+- **Secure login:** Encrypts all traffic to an OpenProStreet server, so the game's password isn't sent in plaintext. Your name and password work on any PC. Older servers still work, without encryption.
+- **Race results:** Sends your lap times, track, race mode and position to the server after each race, for records and leaderboards.
+- **Quick play:** "Schnelles Spiel" no longer tries EA's closed servers. It logs in to the server and joins a quick play race day by itself. If none is running, the server starts one with a random location and events, with AI opponents. If there's still nothing to join a few seconds after the list shows, the list stays open, with the same race days as LAN play, and you pick one.
+- **Event votes:** In a race day's lobby, F1 opens a window with the race day's events. Pick one with the arrow keys or the mouse and call a vote; the game doesn't get the keyboard or mouse while the window is open. Everyone in the room then votes with F1 (yes) or F2 (no). It passes with more than half of the room, the lobby countdown waits for it (20 seconds at most), and the event becomes the next one. Needs server 1.23. The keys are `Key` and `NoKey` under `[Vote]` in the ini, and `Enabled=0` turns it off.
+- **Dynamic status:** Displays whether you are in a race day, navigating menus, or in career.
+- **Player car display:** Detects the car currently driven by the player and translates internal models to real vehicle names (e.g. "Nissan GT-R (R35)", "Mazda RX-7", "Chevrolet Corvette Z06", "Toyota Supra").
+- **Race mode and event type:** Identifies specific race types (e.g. "Grip", "Drift", "1/4 Mile Drag", "Wheelie Competition", "Speed Challenge", "Top Speed Run", "Sector Shootout", "Time Attack", "Grip Class").
+- **Detailed stats:** Shows your current career balance and Raceday XP (formatted with commas).
+- **Map identification:** Detects the current track/map and translates internal identifiers to human-readable names (e.g. "Nevada Highway", "Chicago Airfield").
+- **Dynamic cycle:** Automatically cycles Discord details line between track name, race type, current car, and Raceday XP during gameplay.
+- **Car fixes built in:** No tank slapper and no speed limiter on any car, the same changes the NFS-VltEd scripts "Tank Unslapper" and "Speed Limiter Removed" make, without VltEd. See [Car fixes](#car-fixes).
+- **Main menu:** The "LAN Play" button reads "OpenProStreet" in every language, the copyright line shows the client version, and the game no longer tries to log in to EA (the "Connecting to EA server..." popup you had to cancel).
+- **Account screen:** "Create new LAN account" and "Use existing LAN account" read "Create OpenProStreet account" and "Log in to OpenProStreet account", the title above them reads "OpenProStreet", and the messages around creating an account say OpenProStreet too.
+- **Safe memory management:** Validates pointers and handles memory reading safely to prevent game crashes.
 
----
-
-## 🕹️ Game & Executable Requirements
+## Requirements
 
 This plugin was developed for the **v1.1 (Europe) "Battery 1.1 nocdfix"** executable layout.
 
-- **Compatibility**: Battery No-CD fix is recommended for exact memory address offset resolution.
-- **Packed executables**: Not supported, for example the "Vitality" 1.1 No-CD (3.7 MB, MD5 `15082baf8bb09b3298768c9b5c2b946e`). Its code is still compressed when plugins load, so neither this client nor XNFSPS MultiFix can patch it, and settings like the resolution won't stick. The client detects this, shows a message and stays off.
-- **Game version**: Requires NFS ProStreet updated to version **1.1**.
-- **XNFSPS MultiFix**: Required. It also loads plugins from the `scripts` folder.
-- **Fusion Fix**: Not compatible. Remove it before installing.
-- **Disclaimer**: This project does not promote software piracy; ownership of a legitimate copy of the game is expected.
+- **Compatibility:** the Battery No-CD fix is recommended for exact memory address offset resolution.
+- **Packed executables:** not supported, for example the "Vitality" 1.1 No-CD (3.7 MB, MD5 `15082baf8bb09b3298768c9b5c2b946e`). Its code is still compressed when plugins load, so neither this client nor XNFSPS MultiFix can patch it, and settings like the resolution won't stick. The client detects this, shows a message and stays off.
+- **Game version:** NFS ProStreet updated to version **1.1**.
+- **XNFSPS MultiFix:** required. It also loads plugins from the `scripts` folder.
+- **Fusion Fix:** not compatible. Remove it before installing.
+- **Disclaimer:** this project does not promote software piracy; ownership of a legitimate copy of the game is expected.
 
----
+## Install
 
-## 🛠️ Installation
+Pre-compiled release bundles (`OpenProStreetClient_v*.zip`) containing the ASI plugin and `discord_game_sdk.dll` can be
+downloaded from **[weexnes.dev/project/OpenProStreetClient](https://weexnes.dev/project/OpenProStreetClient#artifacts)**.
 
 1. Download the latest release from [weexnes.dev Artifacts](https://weexnes.dev/project/OpenProStreetClient#artifacts).
-2. Extract the archive contents:
-   - Place `OpenProStreetClient.asi` and `discord_game_sdk.dll` into your NFS ProStreet `scripts/` directory (`<prostreet-root>/scripts/`).
+2. Extract the archive contents: place `OpenProStreetClient.asi` and `discord_game_sdk.dll` into your NFS ProStreet `scripts/` directory (`<prostreet-root>/scripts/`).
 3. **If you're upgrading from ProStreetRPC, delete `scripts/ProStreetRPC.asi`.** Running both would hook the game twice.
-4. Ensure Discord is running and launch NFS ProStreet!
+4. Make sure Discord is running and launch NFS ProStreet!
+
+## Usage
+
+Settings live in `scripts/OpenProStreetClient.ini`.
 
 ### Your account
 
@@ -259,34 +258,33 @@ Colour=0
 
 Colour is also off when `NO_COLOR` is set, and the detailed log has no colour.
 
----
-
-## 💻 Building from Source
+## Build from source
 
 The Monocypher encryption library, MinHook (BSD licence) and Dear ImGui (MIT licence), for the overlay, are included in `vendor/`.
 
-### Option A: Linux Cross-Compilation (Recommended)
+### Linux cross-compilation (recommended)
+
 ```bash
 # Install dependencies (MinGW-w64 toolchain, CMake, Make, curl, unzip)
 sudo pacman -S mingw-w64-gcc cmake make curl unzip
 
-# Run automated cross-build script
+# Run the automated cross-build script
 bash build.sh
 ```
-Output binaries and release zip will be placed in `build/`.
+
+Output binaries and the release zip are placed in `build/`.
 
 To test the encryption code against a server without the game, build `tests/` and run `secure_proxy`, then point OpenProStreet's `tests/race_test.js` at it with `PROXY_PORT`.
 
-### Option B: Windows Native Build (Visual Studio & vcpkg)
-```cmd
+### Windows native build (Visual Studio and vcpkg)
+
+```bash
 vcpkg install discord-game-sdk:x86-windows
 cmake -B build -A Win32 -DCMAKE_TOOLCHAIN_FILE=[path-to-vcpkg]/scripts/buildsystems/vcpkg.cmake
 cmake --build build --config Release
 ```
 
----
+## License
 
-## 📜 License & Repository
-
-- **Repository**: [https://code.weexnes.dev/OpenProStreetClient](https://code.weexnes.dev/OpenProStreetClient)
-- **Part of the Need for Speed: ProStreet Modding Ecosystem**
+No license has been chosen yet. Part of the Need for Speed: ProStreet modding ecosystem.
+Repository: [code.weexnes.dev/OpenProStreetClient](https://code.weexnes.dev/OpenProStreetClient).
