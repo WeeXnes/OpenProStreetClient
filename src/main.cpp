@@ -26,7 +26,7 @@
 
 discord::Core *discordCore = nullptr;
 
-const std::string version = "10.17";
+const std::string version = "10.18";
 
 // Every hook patches nfs.exe v1.1 at fixed addresses, so the client only runs on that layout. The
 // game's version check pushes 1, 1 here (MultiFix reads the same bytes). A packed exe, such as the
@@ -58,7 +58,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
   if (ul_reason_for_call == DLL_PROCESS_ATTACH) {
     Log::Init(hModule);
     Log::Debug("[OpenProStreet] ASI attached. "
-           "(https://code.weexnes.dev/OpenProStreetClient)\n");
+           "(https://code.weexnes.dev/OpenProStreet/client)\n");
     char procname[MAX_PATH];
     GetModuleFileNameA(NULL, procname, MAX_PATH);
     if (strstr(procname, "nfs.exe") == NULL) {
@@ -68,7 +68,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
 
     Log::Debug("[OpenProStreet] nfs.exe detected.\n");
     Log::Banner("OpenProStreet Client " + version,
-                {{"source", "code.weexnes.dev/OpenProStreetClient"},
+                {{"source", "code.weexnes.dev/OpenProStreet/client"},
                  {"log", "short. Set Verbose=1 under [Log] in scripts\\OpenProStreetClient.ini for detail"}});
 
     DisableThreadLibraryCalls(hModule);

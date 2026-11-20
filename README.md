@@ -3,7 +3,7 @@
   <h1>OpenProStreet Client</h1>
   <p>The game plugin for OpenProStreet servers, for Need for Speed: ProStreet. Formerly ProStreetRPC.</p>
   <p>
-    <a href="https://weexnes.dev/project/OpenProStreetClient#artifacts"><img src="https://img.shields.io/badge/download-latest-000000?style=flat-square&labelColor=1f1f1f" alt="Download" /></a>
+    <a href="https://weexnes.dev/project/OpenProStreet/client#artifacts"><img src="https://img.shields.io/badge/download-latest-000000?style=flat-square&labelColor=1f1f1f" alt="Download" /></a>
     <a href="#requirements"><img src="https://img.shields.io/badge/platform-NFS%20ProStreet%201.1-000000?style=flat-square&labelColor=1f1f1f" alt="Platform" /></a>
     <a href="#build-from-source"><img src="https://img.shields.io/badge/stack-C%2B%2B-000000?style=flat-square&labelColor=1f1f1f" alt="Stack" /></a>
   </p>
@@ -42,9 +42,9 @@ This plugin was developed for the **v1.1 (Europe) "Battery 1.1 nocdfix"** execut
 ## Install
 
 Pre-compiled release bundles (`OpenProStreetClient_v*.zip`) containing the ASI plugin and `discord_game_sdk.dll` can be
-downloaded from **[weexnes.dev/project/OpenProStreetClient](https://weexnes.dev/project/OpenProStreetClient#artifacts)**.
+downloaded from **[weexnes.dev/project/OpenProStreet/client](https://weexnes.dev/project/OpenProStreet/client#artifacts)**.
 
-1. Download the latest release from [weexnes.dev Artifacts](https://weexnes.dev/project/OpenProStreetClient#artifacts).
+1. Download the latest release from [weexnes.dev Artifacts](https://weexnes.dev/project/OpenProStreet/client#artifacts).
 2. Extract the archive contents: place `OpenProStreetClient.asi` and `discord_game_sdk.dll` into your NFS ProStreet `scripts/` directory (`<prostreet-root>/scripts/`).
 3. **If you're upgrading from ProStreetRPC, delete `scripts/ProStreetRPC.asi`.** Running both would hook the game twice.
 4. Make sure Discord is running and launch NFS ProStreet!
@@ -287,4 +287,4 @@ cmake --build build --config Release
 ## License
 
 No license has been chosen yet. Part of the Need for Speed: ProStreet modding ecosystem.
-Repository: [code.weexnes.dev/OpenProStreetClient](https://code.weexnes.dev/OpenProStreetClient).
+Repository: [code.weexnes.dev/OpenProStreet/client](https://code.weexnes.dev/OpenProStreet/client).

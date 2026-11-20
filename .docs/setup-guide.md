@@ -38,4 +38,4 @@ The project includes `.onedev-buildspec.yml` configured for OneDev pipelines:
 - Automatically parses version string from `src/main.cpp`.
 - Checks for tag collisions on git origin.
 - Executes cross-compilation inside a builder container.
-- Publishes artifacts to `weexnes.dev/project/OpenProStreetClient#artifacts`.
+- Publishes artifacts to `weexnes.dev/project/OpenProStreet/client#artifacts`.

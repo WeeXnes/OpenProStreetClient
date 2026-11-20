@@ -177,7 +177,7 @@ jobs:
   - type: BranchUpdateTrigger
     userMatch: anyone
   - type: TagCreateTrigger
-    projects: OpenProStreetClient
+    projects: OpenProStreet/client
   retryCondition: never
   maxAttempts: 4
   retryDelay: 30

@@ -1,6 +1,6 @@
 # OpenProStreet Client Documentation
 
-The OpenProStreet client is a 32-bit (x86) ASI plugin for Need for Speed: ProStreet, and the companion to the [OpenProStreet](https://code.weexnes.dev/OpenProStreet) server. It started as ProStreetRPC, a Discord Rich Presence plugin.
+The OpenProStreet client is a 32-bit (x86) ASI plugin for Need for Speed: ProStreet, and the companion to the [OpenProStreet](https://code.weexnes.dev/OpenProStreet/server) server. It started as ProStreetRPC, a Discord Rich Presence plugin.
 
 ---
 
