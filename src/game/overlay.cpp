@@ -789,8 +789,9 @@ namespace Overlay
         float fill = next > start ? static_cast<float>((shown - start) / (next - start)) : 1.0f;
         if (fill < 0.0f) fill = 0.0f;
         if (fill > 1.0f) fill = 1.0f;
+        const TeamStyle* team = TeamStyleOf(xp.family);
         const bool levelledUp = index > 0;
-        const ImVec4 barColour = levelledUp ? Gold : Info;
+        const ImVec4 barColour = levelledUp ? Gold : (team ? team->colour : Info);
         const auto faded = [alpha](const ImVec4& c) { return ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, c.w * alpha)); };
 
         ImGui::Dummy(ImVec2(0.0f, 6.0f * s));
@@ -824,7 +825,6 @@ namespace Overlay
             ImGui::TextColored(Text3, "%s XP   top level", FormatXp(static_cast<long long>(shown + 0.5)).c_str());
 
         // The race type's pool: the same XP, counting up with the bar, and the place in it on the server.
-        const TeamStyle* team = TeamStyleOf(xp.family);
         if (team)
         {
             const double earned = shown - static_cast<double>(xp.total - xp.gained);
