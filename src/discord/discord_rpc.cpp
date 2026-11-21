@@ -159,8 +159,12 @@ namespace
         if (!core) return;
         char exePath[MAX_PATH] = {};
         if (GetModuleFileNameA(nullptr, exePath, MAX_PATH) > 0) {
-            const discord::Result regRes = core->ActivityManager().RegisterCommand(exePath);
-            Log::Debug("[OpenProStreet] Discord RegisterCommand(%s) -> %d\n", exePath, static_cast<int>(regRes));
+            std::string cmd(exePath);
+            if (cmd.find(' ') != std::string::npos && cmd.front() != '"') {
+                cmd = "\"" + cmd + "\"";
+            }
+            const discord::Result regRes = core->ActivityManager().RegisterCommand(cmd.c_str());
+            Log::Debug("[OpenProStreet] Discord RegisterCommand(%s) -> %d\n", cmd.c_str(), static_cast<int>(regRes));
         }
 
         core->ActivityManager().OnActivityJoin.Connect([](const char* secret) {

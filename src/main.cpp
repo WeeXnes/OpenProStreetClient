@@ -71,6 +71,14 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
       return TRUE;
     }
 
+    // Discord's Launch Game URL handler can spawn nfs.exe with Discord's working directory;
+    // ProStreet opens game assets via relative paths, so anchor cwd to the game folder.
+    const std::string exeStr(procname);
+    const size_t slash = exeStr.find_last_of("\\/");
+    if (slash != std::string::npos) {
+      SetCurrentDirectoryA(exeStr.substr(0, slash).c_str());
+    }
+
     Log::Debug("[OpenProStreet] nfs.exe detected.\n");
     Log::Banner("OpenProStreet Client " + version,
                 {{"source", "code.weexnes.dev/OpenProStreet/client"},
