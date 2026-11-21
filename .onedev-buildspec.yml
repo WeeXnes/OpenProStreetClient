@@ -66,6 +66,7 @@ jobs:
   triggers:
   - type: BranchUpdateTrigger
     branches: master
+    paths: src/main.cpp
     userMatch: anyone
   retryCondition: never
   maxAttempts: 4
@@ -227,6 +228,9 @@ jobs:
     artifacts: '**'
     condition: SUCCESSFUL
     optional: false
+  triggers:
+  - type: PullRequestUpdateTrigger
+    branches: master
   retryCondition: never
   maxAttempts: 4
   retryDelay: 30
