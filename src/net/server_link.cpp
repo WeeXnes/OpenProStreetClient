@@ -183,6 +183,7 @@ namespace ServerLink
         if (xml.find("<method> hello") != std::string::npos && xml.find("TRANSACTION_TYPE_REPLY") != std::string::npos) {
             g_helloRejected = false;
             Overlay::OnConnected();
+            QuickMatch::OnServerConnected();
         }
         // Sent on joining a room: the race day's allowed cars, or nothing for every car.
         if (xml.find("<method> allowedCars") != std::string::npos) {
@@ -234,7 +235,8 @@ namespace ServerLink
             }
             const int ev = atoi(ParamValue(xml, "ev").c_str());
             const int evs = atoi(ParamValue(xml, "evs").c_str());
-            Overlay::SetLobbyState(ParamValue(xml, "room"), ParamValue(xml, "atm"), ev, evs, players);
+            Overlay::SetLobbyState(ParamValue(xml, "room"), ParamValue(xml, "atm"), ev, evs, players,
+                                   ParamValue(xml, "id"), ParamValue(xml, "invite"));
             if (count == 0) {
                 EventVote::Reset();
                 Overlay::ResetRoomState();
@@ -273,6 +275,10 @@ namespace ServerLink
         // During a quick match: the race day the server picked or prepared, or nothing yet.
         if (xml.find("<method> quickMatchRoom") != std::string::npos) {
             QuickMatch::SetServerRoom(ParamValue(xml, "gamename"));
+        }
+        // Answer to an accepted Discord invite: resolves to a room name or an error.
+        if (xml.find("<method> inviteRoom") != std::string::npos) {
+            QuickMatch::SetInviteRoom(ParamValue(xml, "gamename"), ParamValue(xml, "display"), ParamValue(xml, "error"));
         }
         // What a race meant for the player: a notification in the overlay.
         if (xml.find("<method> notice") != std::string::npos) {
@@ -651,6 +657,24 @@ namespace ServerLink
         Lock lock;
         g_quickMatchPending = false;
         SendCommand("matchmaking", "cancelQuickMatch", std::vector<std::pair<std::string, std::string> >());
+    }
+
+    void RequestJoinInvite(const std::string& secret) {
+        if (!g_hasIdentity || secret.empty()) return;
+        std::vector<std::pair<std::string, std::string> > params;
+        params.push_back(std::make_pair(std::string("secret"), secret));
+        Lock lock;
+        if (g_client && g_client->GetState() == SecureClient::State::Established) {
+            SendCommand("matchmaking", "joinInvite", params);
+        }
+    }
+
+    void CancelInvite() {
+        if (!g_hasIdentity) return;
+        Lock lock;
+        if (g_client && g_client->GetState() == SecureClient::State::Established) {
+            SendCommand("matchmaking", "cancelInvite", std::vector<std::pair<std::string, std::string> >());
+        }
     }
 
     void RequestStanding(const std::string& trackKey, const std::string& raceMode, const std::string& speedLimit) {

@@ -14,6 +14,7 @@
 #include "game/hooks.h"
 #include "game/lan_menu.h"
 #include "game/map.h"
+#include "game/overlay.h"
 #include "game/race_mode.h"
 #include "net/server_link.h"
 #include "log.h"
@@ -61,10 +62,13 @@ namespace QuickMatch
     static volatile LONG g_generation = 0; // one per quick match, so an old timeout doesn't end a new one
     static volatile bool g_listArrived = false;
 
-    // The race day the server prepared or picked for this quick match, if it says.
+    // The race day the server prepared or picked for this quick match or Discord invite.
     static CRITICAL_SECTION g_roomLock;
     static bool g_serverRoomKnown = false;
     static std::string g_serverRoom;
+    static bool g_inviteMode = false;
+    static std::string g_inviteSecret;
+    static bool g_inviteSent = false;
 
     // What the game's "create race day" menus are built from (0x56C2E0, 0x56C5E0, 0x56C6C0, 0x578EB0).
     static const uintptr_t CAREER_DB_PTR = 0x6B9DC8;  // 0xAB9DC8
@@ -239,10 +243,80 @@ namespace QuickMatch
     void SetServerRoom(const std::string& gameName) {
         if (!g_on) return;
         EnterCriticalSection(&g_roomLock);
+        if (!g_inviteMode) {
+            g_serverRoomKnown = true;
+            g_serverRoom = gameName;
+        }
+        LeaveCriticalSection(&g_roomLock);
+        Log::Debug("[OpenProStreet] Quick match: the server's race day is [%s].\n", gameName.empty() ? "none yet" : gameName.c_str());
+    }
+
+    static std::string InviteErrorText(const std::string& err) {
+        if (err == "roomFull") return "That race day is already full.";
+        if (err == "roomClosed") return "That race day is locked or already racing.";
+        if (err == "clientUpdateRequired") return "Update OpenProStreetClient to join.";
+        return "That race day invite has expired or ended.";
+    }
+
+    void RequestInviteJoin(const std::string& secret) {
+        if (secret.empty()) return;
+        bool connected = ServerLink::IsConnected();
+        EnterCriticalSection(&g_roomLock);
+        g_inviteMode = true;
+        g_inviteSecret = secret;
+        g_inviteSent = connected;
+        g_serverRoomKnown = false;
+        g_serverRoom.clear();
+        LeaveCriticalSection(&g_roomLock);
+
+        InterlockedIncrement(&g_generation);
+        g_listArrived = false;
+        InterlockedExchange(&g_phase, PHASE_WAITING);
+
+        Log::Event(Log::Tag::Discord, "Discord invite received; preparing to join invited race day.\n");
+        if (connected) {
+            ServerLink::RequestJoinInvite(secret);
+        } else {
+            Overlay::PushNotice("best", "Discord invite ready",
+                                std::vector<std::string>{"Open LAN Play and log in to join the race day."});
+        }
+    }
+
+    void OnServerConnected() {
+        std::string secret;
+        EnterCriticalSection(&g_roomLock);
+        if (g_inviteMode && !g_inviteSecret.empty() && !g_inviteSent) {
+            secret = g_inviteSecret;
+            g_inviteSent = true;
+        }
+        LeaveCriticalSection(&g_roomLock);
+        if (!secret.empty()) ServerLink::RequestJoinInvite(secret);
+    }
+
+    void SetInviteRoom(const std::string& gameName, const std::string& displayName, const std::string& error) {
+        if (!error.empty() || gameName.empty()) {
+            EnterCriticalSection(&g_roomLock);
+            g_inviteMode = false;
+            g_inviteSecret.clear();
+            g_inviteSent = false;
+            g_serverRoomKnown = false;
+            g_serverRoom.clear();
+            LeaveCriticalSection(&g_roomLock);
+            InterlockedExchange(&g_phase, PHASE_IDLE);
+            Overlay::PushNotice("not_counted", "Invite unavailable", std::vector<std::string>{InviteErrorText(error)});
+            return;
+        }
+
+        EnterCriticalSection(&g_roomLock);
+        g_inviteMode = true;
         g_serverRoomKnown = true;
         g_serverRoom = gameName;
         LeaveCriticalSection(&g_roomLock);
-        Log::Debug("[OpenProStreet] Quick match: the server's race day is [%s].\n", gameName.empty() ? "none yet" : gameName.c_str());
+
+        const std::string label = displayName.empty() ? gameName : displayName;
+        Overlay::PushNotice("best", "Discord invite: " + label,
+                            std::vector<std::string>{"Open LAN Play (or refresh the game list) to join."});
+        Log::Debug("[OpenProStreet] Discord invite resolved to room [%s].\n", gameName.c_str());
     }
 
     // A few seconds after the first list, a quick match that couldn't join leaves the list to the player.
@@ -251,9 +325,17 @@ namespace QuickMatch
         Sleep(JOIN_TIMEOUT_MS);
         if (g_generation != generation) return 0;
         if (InterlockedCompareExchange(&g_phase, PHASE_IDLE, PHASE_WAITING) != PHASE_WAITING) return 0;
-        ServerLink::CancelQuickMatch();
-        Log::Debug("[OpenProStreet] Quick match: no race day to join after %lu ms, leaving the list to the player.\n", JOIN_TIMEOUT_MS);
-        Log::Summary(Log::Tag::Match, "no quick play race day to join yet, pick a race day from the list\n");
+        bool wasInvite = false;
+        EnterCriticalSection(&g_roomLock);
+        wasInvite = g_inviteMode;
+        g_inviteMode = false;
+        g_inviteSecret.clear();
+        g_inviteSent = false;
+        LeaveCriticalSection(&g_roomLock);
+        if (wasInvite) ServerLink::CancelInvite();
+        else ServerLink::CancelQuickMatch();
+        Log::Debug("[OpenProStreet] Match join timed out after %lu ms, leaving the list to the player.\n", JOIN_TIMEOUT_MS);
+        Log::Summary(Log::Tag::Match, "didn't auto-join yet, pick a race day from the list\n");
         return 0;
     }
 
@@ -288,7 +370,15 @@ namespace QuickMatch
         reinterpret_cast<JoinSelectedFn>(g_baseModule + LAN_JOIN_SELECTED)(manager);
         if (LanMenu::State(manager) == STATE_JOINING) {
             InterlockedExchange(&g_phase, PHASE_IDLE);
-            Log::Event(Log::Tag::Match, "Joining quick play race day %s\n", Log::Highlight(name).c_str());
+            EnterCriticalSection(&g_roomLock);
+            const bool joinedInvite = g_inviteMode;
+            g_inviteMode = false;
+            g_inviteSecret.clear();
+            g_inviteSent = false;
+            LeaveCriticalSection(&g_roomLock);
+            Log::Event(joinedInvite ? Log::Tag::Discord : Log::Tag::Match,
+                       joinedInvite ? "Joining invited race day %s\n" : "Joining quick play race day %s\n",
+                       Log::Highlight(name).c_str());
         } else {
             InterlockedExchange(&g_phase, PHASE_WAITING);
             Log::Debug("[OpenProStreet] Quick match: the join button did nothing (state 0x%X).\n", LanMenu::State(manager));
@@ -327,6 +417,12 @@ namespace QuickMatch
                 InterlockedIncrement(&g_generation);
                 g_listArrived = false;
                 ForgetServerRoom();
+                EnterCriticalSection(&g_roomLock);
+                g_inviteMode = false;
+                g_inviteSecret.clear();
+                g_inviteSent = false;
+                LeaveCriticalSection(&g_roomLock);
+                ServerLink::CancelInvite();
                 InterlockedExchange(&g_phase, PHASE_WAITING);
                 std::string location, events;
                 int difficulty = 0;
@@ -335,8 +431,17 @@ namespace QuickMatch
                 option = OPTION_LAN_PLAY;
             } else if (option == OPTION_LAN_PLAY) {
                 InterlockedIncrement(&g_generation);
-                InterlockedExchange(&g_phase, PHASE_IDLE);
-                ServerLink::CancelQuickMatch();
+                g_listArrived = false;
+                EnterCriticalSection(&g_roomLock);
+                const bool hasInvite = g_inviteMode && !g_inviteSecret.empty();
+                LeaveCriticalSection(&g_roomLock);
+                if (hasInvite) {
+                    InterlockedExchange(&g_phase, PHASE_WAITING);
+                    ServerLink::CancelQuickMatch();
+                } else {
+                    InterlockedExchange(&g_phase, PHASE_IDLE);
+                    ServerLink::CancelQuickMatch();
+                }
             }
         }
         reinterpret_cast<OnOptionFn>(g_origOnOption)(manager, option, param);

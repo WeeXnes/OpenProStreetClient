@@ -78,12 +78,20 @@ namespace Overlay
     static bool g_racing = false;
     // Room and lobby state, from the server. Shown while not racing.
     static std::string g_lobbyRoom;
+    static std::string g_lobbyRoomId;
+    static std::string g_lobbyInviteSecret;
     static std::string g_lobbyAtmosphere;
     static int g_lobbyEventIndex = 0;
     static int g_lobbyEventCount = 0;
     static std::vector<LobbyPlayer> g_lobbyPlayers;
     static LobbyTimerState g_lobbyTimer;
     static int64_t g_lobbyTimerUpdatedAt = 0;
+    static int64_t g_joinReqUserId = 0;
+    static std::string g_joinReqName;
+    static double g_joinReqExpiresAt = 0.0;
+    static bool g_joinReplyPending = false;
+    static int64_t g_joinReplyUserId = 0;
+    static bool g_joinReplyAccept = false;
     static bool g_lobbyCarsShown = true;
     static bool g_paceBarShown = true;
     static std::string g_trackKey, g_trackName, g_raceMode;
@@ -2162,6 +2170,25 @@ namespace Overlay
         ImGui::PopStyleColor(6);
     }
 
+    static void DrawJoinRequestPopup(const std::string& username, double secondsLeft, float s)
+    {
+        const ImVec2 display = ImGui::GetIO().DisplaySize;
+        ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.24f), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f * s, 0.0f), ImVec2(480.0f * s, display.y));
+        if (!ImGui::Begin("##discord_join_req", nullptr, PanelFlags)) { ImGui::End(); return; }
+        DrawCardTitle("Discord ask to join", Info, s);
+        ImGui::PushFont(g_fontSmall);
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 14.0f * s);
+        ImGui::TextColored(Text1, "%s wants to join your Race Day (%ds)", username.c_str(), static_cast<int>(secondsLeft + 0.999));
+        ImGui::Dummy(ImVec2(0.0f, 6.0f * s));
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 14.0f * s);
+        DrawKeyHint("F5", "accept", s);
+        ImGui::SameLine(0.0f, 16.0f * s);
+        DrawKeyHint("F6", "decline", s);
+        ImGui::PopFont();
+        ImGui::End();
+    }
+
     static void BeforePresent(IDirect3DDevice9* device, IDirect3DSwapChain9*)
     {
         if (!g_ready || g_deviceLost) return;
@@ -2236,10 +2263,45 @@ namespace Overlay
                 if (g_hudVisible && g_chatShown) chats.push_back(g_chatQueue[i]);
             }
         }
+        bool showJoinReq = false;
+        std::string joinReqName;
+        double joinReqLeft = 0.0;
+        {
+            Guard guard;
+            if (g_joinReqUserId != 0)
+            {
+                if (now >= g_joinReqExpiresAt)
+                {
+                    g_joinReqUserId = 0;
+                    g_joinReqName.clear();
+                }
+                else
+                {
+                    showJoinReq = true;
+                    joinReqName = g_joinReqName;
+                    joinReqLeft = g_joinReqExpiresAt - now;
+                }
+            }
+        }
+        if (showJoinReq && front && !g_settingsOpen)
+        {
+            const bool acc = KeyJustPressed(VK_F5, true);
+            const bool dec = KeyJustPressed(VK_F6, true);
+            if (acc || dec)
+            {
+                Guard guard;
+                g_joinReplyUserId = g_joinReqUserId;
+                g_joinReplyAccept = acc;
+                g_joinReplyPending = true;
+                g_joinReqUserId = 0;
+                g_joinReqName.clear();
+                showJoinReq = false;
+            }
+        }
         const std::vector<RaceResults::LiveRacer> liveRacers = scoreboardHeld ? RaceResults::GetLiveRacers() : std::vector<RaceResults::LiveRacer>();
         const bool showScoreboard = scoreboardHeld && (!liveRacers.empty() || !lobbyPlayers.empty());
         const ReShifted::Indicator shift = g_hudVisible ? ReShifted::GetIndicator() : ReShifted::Indicator();
-        if (!showStanding && !showLobby && !showScoreboard && notices.empty() && chats.empty() && !g_test && !vote.windowOpen && !vote.voteActive && !g_settingsOpen && !shift.shown) return;
+        if (!showStanding && !showLobby && !showScoreboard && notices.empty() && chats.empty() && !g_test && !vote.windowOpen && !vote.voteActive && !g_settingsOpen && !shift.shown && !showJoinReq) return;
         if (!g_drawnOnce)
         {
             g_drawnOnce = true;
@@ -2300,6 +2362,7 @@ namespace Overlay
         if (!chats.empty()) DrawChatToasts(chats, now, topCenterY, s);
         if (shift.shown) DrawShiftIndicator(shift, s);
         if (vote.voteActive) DrawVotePopup(vote, s);
+        if (showJoinReq && !vote.voteActive) DrawJoinRequestPopup(joinReqName, joinReqLeft, s);
         if (vote.windowOpen) DrawVoteWindow(vote, s);
         if (g_settingsOpen) DrawSettingsWindow(now, s);
         if (showScoreboard) DrawScoreboard(trackName, mode, boards, lobbyRoom, lobbyAtmosphere, lobbyEvent, lobbyEvents,
@@ -2493,10 +2556,13 @@ namespace Overlay
     }
 
     void SetLobbyState(const std::string& room, const std::string& atmosphere, int eventIndex, int eventCount,
-                       const std::vector<LobbyPlayer>& players)
+                       const std::vector<LobbyPlayer>& players,
+                       const std::string& roomId, const std::string& inviteSecret)
     {
         Guard guard;
         g_lobbyRoom = room;
+        g_lobbyRoomId = roomId;
+        g_lobbyInviteSecret = inviteSecret;
         g_lobbyAtmosphere = atmosphere;
         g_lobbyEventIndex = eventIndex;
         g_lobbyEventCount = eventCount;
@@ -2516,6 +2582,8 @@ namespace Overlay
         LobbySnapshot snap;
         snap.inRoom = !g_lobbyPlayers.empty() || !g_lobbyRoom.empty();
         snap.room = g_lobbyRoom;
+        snap.roomId = g_lobbyRoomId;
+        snap.inviteSecret = g_lobbyInviteSecret;
         snap.atmosphere = g_lobbyAtmosphere;
         snap.eventIndex = g_lobbyEventIndex;
         snap.eventCount = g_lobbyEventCount;
@@ -2523,6 +2591,26 @@ namespace Overlay
         snap.timer = g_lobbyTimer;
         snap.timerUpdatedAt = g_lobbyTimerUpdatedAt;
         return snap;
+    }
+
+    void PushJoinRequest(int64_t userId, const std::string& username)
+    {
+        if (!g_enabled || userId == 0 || username.empty()) return;
+        Guard guard;
+        g_joinReqUserId = userId;
+        g_joinReqName = username;
+        g_joinReqExpiresAt = Now() + 20.0;
+    }
+
+    bool ConsumeJoinRequestReply(int64_t* outUserId, bool* outAccept)
+    {
+        Guard guard;
+        if (!g_joinReplyPending) return false;
+        if (outUserId) *outUserId = g_joinReplyUserId;
+        if (outAccept) *outAccept = g_joinReplyAccept;
+        g_joinReplyPending = false;
+        g_joinReplyUserId = 0;
+        return true;
     }
 
     bool GetPausedTimerSeconds(int* outSeconds)
@@ -2537,6 +2625,8 @@ namespace Overlay
     {
         Guard guard;
         g_lobbyRoom.clear();
+        g_lobbyRoomId.clear();
+        g_lobbyInviteSecret.clear();
         g_lobbyAtmosphere.clear();
         g_lobbyEventIndex = 0;
         g_lobbyEventCount = 0;

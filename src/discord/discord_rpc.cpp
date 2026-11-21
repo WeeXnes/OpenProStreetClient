@@ -4,6 +4,7 @@
 #include "game/event_vote.h"
 #include "game/map.h"
 #include "game/overlay.h"
+#include "game/quick_match.h"
 #include "game/race_mode.h"
 #include "game/race_results.h"
 #include "net/server_link.h"
@@ -29,6 +30,7 @@ namespace
         std::string state;
         std::string largeText;
         std::string partyId;
+        std::string joinSecret;
         int32_t     partySize = 0;
         int32_t     partyMax = 0;
         int64_t     startTs = 0;
@@ -40,7 +42,8 @@ namespace
         bool ContentDiffers(const ActivitySnapshot& o) const
         {
             return details != o.details || state != o.state || largeText != o.largeText ||
-                   partyId != o.partyId || partySize != o.partySize || partyMax != o.partyMax ||
+                   partyId != o.partyId || joinSecret != o.joinSecret ||
+                   partySize != o.partySize || partyMax != o.partyMax ||
                    startTs != o.startTs || endTs != o.endTs;
         }
 
@@ -151,6 +154,35 @@ namespace
         return out;
     }
 
+    static void AttachDiscordCallbacks(discord::Core* core)
+    {
+        if (!core) return;
+        char exePath[MAX_PATH] = {};
+        if (GetModuleFileNameA(nullptr, exePath, MAX_PATH) > 0) {
+            const discord::Result regRes = core->ActivityManager().RegisterCommand(exePath);
+            Log::Debug("[OpenProStreet] Discord RegisterCommand(%s) -> %d\n", exePath, static_cast<int>(regRes));
+        }
+
+        core->ActivityManager().OnActivityJoin.Connect([](const char* secret) {
+            if (!secret || !secret[0]) return;
+            Log::Event(Log::Tag::Discord, "Discord OnActivityJoin triggered.\n");
+            QuickMatch::RequestInviteJoin(secret);
+        });
+
+        core->ActivityManager().OnActivityJoinRequest.Connect([](const discord::User& user) {
+            const std::string name = user.GetUsername() ? user.GetUsername() : "Someone";
+            Log::Event(Log::Tag::Discord, "Discord join request from %s.\n", Log::Highlight(name).c_str());
+            Overlay::PushJoinRequest(static_cast<int64_t>(user.GetId()), name);
+        });
+
+        core->ActivityManager().OnActivityInvite.Connect([](discord::ActivityActionType, const discord::User& user, const discord::Activity&) {
+            const std::string name = user.GetUsername() ? user.GetUsername() : "Someone";
+            Log::Event(Log::Tag::Discord, "Discord game invite received from %s.\n", Log::Highlight(name).c_str());
+            Overlay::PushNotice("best", name + " invited you",
+                                std::vector<std::string>{"Accept the invite in Discord to join their Race Day."});
+        });
+    }
+
     uintptr_t ResolveMoneyAddr(uintptr_t baseModule)
     {
         uintptr_t basePtr = baseModule + 0x6B0EA8;
@@ -202,6 +234,7 @@ DWORD WINAPI RpcThread(LPVOID param) {
                     discord::Result res = discord::Core::Create(DISCORD_APP_ID, DiscordCreateFlags_NoRequireDiscord, &discordCore);
                     if (res == discord::Result::Ok) {
                         Log::Event(Log::Tag::Discord, "Discord core connected successfully.\n");
+                        AttachDiscordCallbacks(discordCore);
                         hasSentOnce = false;
                     }
                 }
@@ -292,9 +325,11 @@ DWORD WINAPI RpcThread(LPVOID param) {
                 next.largeText = tip;
 
                 if (online && lobby.inRoom && !lobby.players.empty()) {
-                    next.partyId = "room:" + (!lobby.room.empty() ? lobby.room : "raceday");
+                    const std::string idSource = !lobby.roomId.empty() ? lobby.roomId : (!lobby.room.empty() ? lobby.room : "raceday");
+                    next.partyId = "room:" + idSource;
                     next.partySize = static_cast<int32_t>(lobby.players.size());
                     next.partyMax = 8;
+                    next.joinSecret = lobby.inviteSecret;
                 }
             } else if (online && lobby.inRoom) {
                 const EventVote::View vote = EventVote::Snapshot();
@@ -326,9 +361,11 @@ DWORD WINAPI RpcThread(LPVOID param) {
                 }
 
                 if (!lobby.players.empty()) {
-                    next.partyId = "room:" + roomTitle;
+                    const std::string idSource = !lobby.roomId.empty() ? lobby.roomId : roomTitle;
+                    next.partyId = "room:" + idSource;
                     next.partySize = static_cast<int32_t>(lobby.players.size());
                     next.partyMax = 8;
+                    next.joinSecret = lobby.inviteSecret;
                 }
 
                 std::string tip = atmName;
@@ -360,8 +397,18 @@ DWORD WINAPI RpcThread(LPVOID param) {
             next.state = Truncate(next.state, 127);
             next.largeText = Truncate(next.largeText, 127);
             next.partyId = Truncate(next.partyId, 127);
+            next.joinSecret = Truncate(next.joinSecret, 127);
 
             if (discordCore) {
+                int64_t reqUserId = 0;
+                bool reqAccept = false;
+                if (Overlay::ConsumeJoinRequestReply(&reqUserId, &reqAccept) && reqUserId != 0) {
+                    discordCore->ActivityManager().SendRequestReply(
+                        static_cast<discord::UserId>(reqUserId),
+                        reqAccept ? discord::ActivityJoinRequestReply::Yes : discord::ActivityJoinRequestReply::Ignore,
+                        [](discord::Result) {});
+                }
+
                 const time_t now = time(nullptr);
                 const bool due = !hasSentOnce || next.MajorTransition(lastSent) ||
                                  (next.ContentDiffers(lastSent) && (now - lastUpdateAt >= UPDATE_MIN_INTERVAL_SEC));
@@ -380,6 +427,9 @@ DWORD WINAPI RpcThread(LPVOID param) {
                         activity.GetParty().SetId(next.partyId.c_str());
                         activity.GetParty().GetSize().SetCurrentSize(next.partySize);
                         activity.GetParty().GetSize().SetMaxSize(next.partyMax);
+                    }
+                    if (!next.joinSecret.empty()) {
+                        activity.GetSecrets().SetJoin(next.joinSecret.c_str());
                     }
                     discordCore->ActivityManager().UpdateActivity(activity, [](discord::Result) {});
                     lastSent = next;
