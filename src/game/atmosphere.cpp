@@ -89,10 +89,12 @@ namespace Atmosphere
     static std::vector<std::string> g_names;  // every parameter any preset changes
     static std::vector<Tint> g_tints[3];       // by preset, then by g_names index
     static std::atomic<int> g_preset(Day);
-    static bool g_enabled = true;
+    static std::atomic<int> g_startPreset(Day);
+    static std::atomic<bool> g_enabled(true);
     static bool g_log = false;
     static int  g_key = VK_F8;
     static bool g_effectHooked = false;
+    static bool g_hooksInstalled = false;
 
     // Which g_names entry each effect's parameter handle is, or -1: asking the effect for a name on
     // every call would cost too much, as the game sets thousands of values a frame.
@@ -233,12 +235,17 @@ namespace Atmosphere
 
     static const UINT MAX_FLOATS = 64;
 
+    static bool IsDayOrDisabled()
+    {
+        return !g_enabled.load() || g_preset.load() == Day;
+    }
+
     static HRESULT WINAPI SetValueHook(void* effect, Handle parameter, const void* data, UINT bytes)
     {
         const UINT count = bytes / sizeof(float);
         const int slot = data && bytes % sizeof(float) == 0 && count <= MAX_FLOATS
             ? SlotOf(effect, parameter, static_cast<const float*>(data), count, "SetValue") : -1;
-        if (slot < 0 || g_preset.load() == Day) return g_realSetValue(effect, parameter, data, bytes);
+        if (slot < 0 || IsDayOrDisabled()) return g_realSetValue(effect, parameter, data, bytes);
         float values[MAX_FLOATS];
         memcpy(values, data, bytes);
         Apply(slot, values, count, count == 1);
@@ -248,14 +255,14 @@ namespace Atmosphere
     static HRESULT WINAPI SetFloatHook(void* effect, Handle parameter, float value)
     {
         const int slot = SlotOf(effect, parameter, &value, 1, "SetFloat");
-        if (slot >= 0 && g_preset.load() != Day) Apply(slot, &value, 1, true);
+        if (slot >= 0 && !IsDayOrDisabled()) Apply(slot, &value, 1, true);
         return g_realSetFloat(effect, parameter, value);
     }
 
     static HRESULT WINAPI SetFloatArrayHook(void* effect, Handle parameter, const float* data, UINT count)
     {
         const int slot = data && count <= MAX_FLOATS ? SlotOf(effect, parameter, data, count, "SetFloatArray") : -1;
-        if (slot < 0 || g_preset.load() == Day) return g_realSetFloatArray(effect, parameter, data, count);
+        if (slot < 0 || IsDayOrDisabled()) return g_realSetFloatArray(effect, parameter, data, count);
         float values[MAX_FLOATS];
         memcpy(values, data, count * sizeof(float));
         Apply(slot, values, count, count == 1);
@@ -265,7 +272,7 @@ namespace Atmosphere
     static HRESULT WINAPI SetVectorHook(void* effect, Handle parameter, const float* vector)
     {
         const int slot = vector ? SlotOf(effect, parameter, vector, 4, "SetVector") : -1;
-        if (slot < 0 || g_preset.load() == Day) return g_realSetVector(effect, parameter, vector);
+        if (slot < 0 || IsDayOrDisabled()) return g_realSetVector(effect, parameter, vector);
         float values[4];
         memcpy(values, vector, sizeof(values));
         Apply(slot, values, 4, false);
@@ -275,7 +282,7 @@ namespace Atmosphere
     static HRESULT WINAPI SetVectorArrayHook(void* effect, Handle parameter, const float* vectors, UINT count)
     {
         const int slot = vectors && count * 4 <= MAX_FLOATS ? SlotOf(effect, parameter, vectors, count * 4, "SetVectorArray") : -1;
-        if (slot < 0 || g_preset.load() == Day) return g_realSetVectorArray(effect, parameter, vectors, count);
+        if (slot < 0 || IsDayOrDisabled()) return g_realSetVectorArray(effect, parameter, vectors, count);
         float values[MAX_FLOATS];
         memcpy(values, vectors, count * 4 * sizeof(float));
         Apply(slot, values, count * 4, false);
@@ -289,7 +296,7 @@ namespace Atmosphere
         const UINT count = bytes / sizeof(float);
         const int slot = data && byteOffset % 16 == 0 && bytes % sizeof(float) == 0 && count <= MAX_FLOATS
             ? SlotOf(effect, parameter, static_cast<const float*>(data), count, "SetRawValue") : -1;
-        if (slot < 0 || g_preset.load() == Day) return g_realSetRawValue(effect, parameter, data, byteOffset, bytes);
+        if (slot < 0 || IsDayOrDisabled()) return g_realSetRawValue(effect, parameter, data, byteOffset, bytes);
         float values[MAX_FLOATS];
         memcpy(values, data, bytes);
         Apply(slot, values, count, count == 1);
@@ -453,7 +460,7 @@ namespace Atmosphere
     static void __cdecl SetSkyStyleHook(int style, int envmap, float value)
     {
         static int loggedSky = -1, loggedStyle = -1;
-        const int sky = g_skyOverride.load();
+        const int sky = g_enabled.load() ? g_skyOverride.load() : 0;
         if (sky != loggedSky || style != loggedStyle) {
             loggedSky = sky;
             loggedStyle = style;
@@ -481,7 +488,7 @@ namespace Atmosphere
     static void BeforePresent(IDirect3DDevice9*, IDirect3DSwapChain9*)
     {
         static bool wasDown = false, skyWasDown = false;
-        const bool focus = GameHasFocus();
+        const bool focus = g_enabled.load() && GameHasFocus();
         const bool down = focus && (GetAsyncKeyState(g_key) & 0x8000) != 0;
         if (down && !wasDown) Set(static_cast<Preset>((g_preset.load() + 1) % 3), true);
         wasDown = down;
@@ -490,9 +497,69 @@ namespace Atmosphere
         skyWasDown = skyDown;
     }
 
+    static void EnsureHooks()
+    {
+        if (g_hooksInstalled) return;
+        g_hooksInstalled = true;
+
+        // The game's own sky switch, so a chosen style also replaces the track's when a track loads.
+        const MH_STATUS minhook = MH_Initialize();
+        if ((minhook != MH_OK && minhook != MH_ERROR_ALREADY_INITIALIZED) ||
+            MH_CreateHook(reinterpret_cast<void*>(SET_SKY_STYLE), reinterpret_cast<void*>(SetSkyStyleHook),
+                          reinterpret_cast<void**>(&g_realSetSkyStyle)) != MH_OK ||
+            MH_EnableHook(reinterpret_cast<void*>(SET_SKY_STYLE)) != MH_OK) {
+            g_realSetSkyStyle = nullptr;
+            Log::Warn("Couldn't hook the game's sky switch, so the sky style can't change.\n");
+        }
+        g_skyOverride.store(g_presetSky[g_preset.load()]);
+
+        HMODULE d3dx = GetModuleHandleA("d3dx9_34.dll");
+        if (!d3dx) d3dx = LoadLibraryA("d3dx9_34.dll");
+        const MH_STATUS started = MH_Initialize();
+        if (!d3dx || (started != MH_OK && started != MH_ERROR_ALREADY_INITIALIZED)) {
+            Log::Warn("Day and night are off: d3dx9_34.dll couldn't be hooked.\n");
+            return;
+        }
+        const bool hooked =
+            HookExport(d3dx, "D3DXCreateEffectFromResourceA", reinterpret_cast<void*>(FromResourceHook), reinterpret_cast<void**>(&g_realFromResource)) |
+            HookExport(d3dx, "D3DXCreateEffect", reinterpret_cast<void*>(CreateHook), reinterpret_cast<void**>(&g_realCreate)) |
+            HookExport(d3dx, "D3DXCreateEffectEx", reinterpret_cast<void*>(CreateExHook), reinterpret_cast<void**>(&g_realCreateEx));
+        if (!hooked) {
+            Log::Warn("Day and night are off: d3dx9_34.dll couldn't be hooked.\n");
+            return;
+        }
+        if (D3DHooks::Install()) {
+            D3DHooks::Listener listener;
+            listener.beforePresent = BeforePresent;
+            D3DHooks::AddListener(listener);
+        }
+        Log::Debug("[OpenProStreet] Atmosphere ready: %s, key F%d\n", PRESET_NAMES[g_preset.load()], g_key - VK_F1 + 1);
+    }
+
     Preset Current()
     {
         return static_cast<Preset>(g_preset.load());
+    }
+
+    bool IsEnabled()
+    {
+        return g_enabled.load();
+    }
+
+    void SetEnabled(bool enabled)
+    {
+        g_enabled.store(enabled);
+        if (enabled) EnsureHooks();
+    }
+
+    Preset StartupPreset()
+    {
+        return static_cast<Preset>(g_startPreset.load());
+    }
+
+    void SetStartupPreset(Preset preset)
+    {
+        if (preset >= Day && preset <= Night) g_startPreset.store(preset);
     }
 
     void Set(Preset preset, bool announce)
@@ -541,7 +608,7 @@ namespace Atmosphere
             SetTint(Night, entry.name, entry.night);
         }
         if (!settings.empty()) {
-            g_enabled = GetPrivateProfileIntA("Atmosphere", "Enabled", 1, settings.c_str()) != 0;
+            g_enabled.store(GetPrivateProfileIntA("Atmosphere", "Enabled", 1, settings.c_str()) != 0);
             g_log = GetPrivateProfileIntA("Atmosphere", "Log", 0, settings.c_str()) != 0;
             char text[32] = {};
             GetPrivateProfileStringA("Atmosphere", "Key", "F8", text, sizeof(text), settings.c_str());
@@ -550,7 +617,10 @@ namespace Atmosphere
             g_skyKey = ParseKey(text, VK_F9);
             GetPrivateProfileStringA("Atmosphere", "Start", "Day", text, sizeof(text), settings.c_str());
             for (int preset = Day; preset <= Night; ++preset)
-                if (_stricmp(text, PRESET_NAMES[preset]) == 0) g_preset.store(preset);
+                if (_stricmp(text, PRESET_NAMES[preset]) == 0) {
+                    g_preset.store(preset);
+                    g_startPreset.store(preset);
+                }
             ReadPresetSection(Dusk, settings);
             ReadPresetSection(Night, settings);
             // SkyStyle=1 to 15 swaps in that sky for the look. 0 keeps the track's own.
@@ -560,39 +630,8 @@ namespace Atmosphere
                 g_presetSky[preset] = sky >= 0 && sky <= SKY_STYLES ? sky : 0;
             }
         }
-        if (!g_enabled) return;
+        if (!g_enabled.load()) return;
 
-        // The game's own sky switch, so a chosen style also replaces the track's when a track loads.
-        const MH_STATUS minhook = MH_Initialize();
-        if ((minhook != MH_OK && minhook != MH_ERROR_ALREADY_INITIALIZED) ||
-            MH_CreateHook(reinterpret_cast<void*>(SET_SKY_STYLE), reinterpret_cast<void*>(SetSkyStyleHook),
-                          reinterpret_cast<void**>(&g_realSetSkyStyle)) != MH_OK ||
-            MH_EnableHook(reinterpret_cast<void*>(SET_SKY_STYLE)) != MH_OK) {
-            g_realSetSkyStyle = nullptr;
-            Log::Warn("Couldn't hook the game's sky switch, so the sky style can't change.\n");
-        }
-        g_skyOverride.store(g_presetSky[g_preset.load()]);
-
-        HMODULE d3dx = GetModuleHandleA("d3dx9_34.dll");
-        if (!d3dx) d3dx = LoadLibraryA("d3dx9_34.dll");
-        const MH_STATUS started = MH_Initialize();
-        if (!d3dx || (started != MH_OK && started != MH_ERROR_ALREADY_INITIALIZED)) {
-            Log::Warn("Day and night are off: d3dx9_34.dll couldn't be hooked.\n");
-            return;
-        }
-        const bool hooked =
-            HookExport(d3dx, "D3DXCreateEffectFromResourceA", reinterpret_cast<void*>(FromResourceHook), reinterpret_cast<void**>(&g_realFromResource)) |
-            HookExport(d3dx, "D3DXCreateEffect", reinterpret_cast<void*>(CreateHook), reinterpret_cast<void**>(&g_realCreate)) |
-            HookExport(d3dx, "D3DXCreateEffectEx", reinterpret_cast<void*>(CreateExHook), reinterpret_cast<void**>(&g_realCreateEx));
-        if (!hooked) {
-            Log::Warn("Day and night are off: d3dx9_34.dll couldn't be hooked.\n");
-            return;
-        }
-        if (D3DHooks::Install()) {
-            D3DHooks::Listener listener;
-            listener.beforePresent = BeforePresent;
-            D3DHooks::AddListener(listener);
-        }
-        Log::Debug("[OpenProStreet] Atmosphere ready: %s, key F%d\n", PRESET_NAMES[g_preset.load()], g_key - VK_F1 + 1);
+        EnsureHooks();
     }
 }

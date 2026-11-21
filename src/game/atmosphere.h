@@ -26,6 +26,10 @@ namespace Atmosphere
     // The look right now, and a way to change it, such as from a race day's settings later on.
     Preset Current();
     void Set(Preset preset, bool announce);
+    bool IsEnabled();
+    void SetEnabled(bool enabled);
+    Preset StartupPreset();
+    void SetStartupPreset(Preset preset);
 
     // From the server on joining a room: a race day's "day", "dusk" or "night", which replaces the
     // player's own look while they're in it. "" on leaving gives the player's own look back. F8 still

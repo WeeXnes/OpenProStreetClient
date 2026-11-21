@@ -386,6 +386,14 @@ namespace ServerLink
             for (const auto& entry : updatedPlayerRtts) g_playerRtts[entry.first] = entry.second;
             LeaveCriticalSection(&g_pingLock);
         }
+        if (xml.find("<method> chat<") != std::string::npos || xml.find("<method> chat ") != std::string::npos) {
+            const std::string sender = ParamValue(xml, "sender");
+            const std::string text = ParamValue(xml, "text");
+            const int level = atoi(ParamValue(xml, "level").c_str());
+            if (!sender.empty() && !text.empty()) {
+                Overlay::PushChat(sender, level, text);
+            }
+        }
     }
 
     static void SendCommand(const char* service, const char* method, const std::vector<std::pair<std::string, std::string> >& params) {

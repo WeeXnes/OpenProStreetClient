@@ -374,4 +374,6 @@ namespace ReShifted
     };
 
     void Init(uintptr_t baseModule);
+    Config GetConfig();
+    void SetConfig(const Config& cfg);
 }

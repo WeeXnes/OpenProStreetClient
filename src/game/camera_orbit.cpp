@@ -216,6 +216,13 @@ namespace CameraOrbit
 
         void __attribute__((thiscall)) Hook_DrivingCameraMover_Update(void* mover, float dt)
         {
+            if (!g_cfg.enabled) {
+                g_ctrl.Reset();
+                g_lastMover = mover;
+                g_activeOrbitMover = nullptr;
+                g_origCameraUpdate(mover, dt);
+                return;
+            }
             if (mover != g_lastMover) {
                 g_ctrl.Reset();
                 g_lastMover = mover;
@@ -247,7 +254,7 @@ namespace CameraOrbit
             // orbiting that second call too doubled the angle (stick at the side = camera in front).
             const uintptr_t returnAddr = reinterpret_cast<uintptr_t>(__builtin_return_address(0));
             const bool moverCall = (returnAddr == g_base + DRIVING_CAMERA_LOOK_AT_RET_RVA);
-            if (g_activeOrbitMover && moverCall && eye && target && up) {
+            if (g_cfg.enabled && g_activeOrbitMover && moverCall && eye && target && up) {
                 float orbitedEye[3] = { eye[0], eye[1], eye[2] };
                 float orbitedUp[3]  = { up[0], up[1], up[2] };
                 if (g_ctrl.ComputeOrbitEye(eye, target, up, g_cfg, orbitedEye, orbitedUp)) {
@@ -289,27 +296,23 @@ namespace CameraOrbit
         }
     }
 
-    void Init(uintptr_t baseModule)
+    static bool g_hooksInstalled = false;
+
+    static bool EnsureHooks()
     {
-        g_base = baseModule;
-        LoadSettings();
-
-        if (!g_cfg.enabled) {
-            Log::Event(Log::Tag::Game, "Right-stick camera orbit: off (set [Camera] RightStickOrbit=1 to turn it on)\n");
-            return;
-        }
-
+        if (g_hooksInstalled) return true;
+        if (g_base == 0) return false;
         ResolveXInput();
 
         const MH_STATUS initStatus = MH_Initialize();
         if (initStatus != MH_OK && initStatus != MH_ERROR_ALREADY_INITIALIZED) {
             Log::Warn("[CameraOrbit] MH_Initialize failed (%d)\n", static_cast<int>(initStatus));
-            return;
+            return false;
         }
 
-        void* camUpdateTarget = reinterpret_cast<void*>(baseModule + DRIVING_CAMERA_UPDATE_RVA);
-        void* lookAtTarget = reinterpret_cast<void*>(baseModule + BUILD_LOOK_AT_MATRIX_RVA);
-        void* shiftDeltaTarget = reinterpret_cast<void*>(baseModule + SHIFT_BY_DELTA_RVA);
+        void* camUpdateTarget = reinterpret_cast<void*>(g_base + DRIVING_CAMERA_UPDATE_RVA);
+        void* lookAtTarget = reinterpret_cast<void*>(g_base + BUILD_LOOK_AT_MATRIX_RVA);
+        void* shiftDeltaTarget = reinterpret_cast<void*>(g_base + SHIFT_BY_DELTA_RVA);
 
         const bool ok1 = MH_CreateHook(camUpdateTarget, reinterpret_cast<void*>(Hook_DrivingCameraMover_Update),
                                        reinterpret_cast<void**>(&g_origCameraUpdate)) == MH_OK &&
@@ -324,8 +327,42 @@ namespace CameraOrbit
         if (!ok1 || !ok2 || !ok3) {
             Log::Warn("[CameraOrbit] Failed to install hooks (update=%d lookat=%d shift=%d)\n",
                       ok1 ? 1 : 0, ok2 ? 1 : 0, ok3 ? 1 : 0);
+            return false;
+        }
+        g_hooksInstalled = true;
+        return true;
+    }
+
+    Config GetConfig()
+    {
+        return g_cfg;
+    }
+
+    void SetConfig(const Config& cfg)
+    {
+        g_cfg = cfg;
+        g_cfg.deadzone = Controller::Clamp(g_cfg.deadzone, 0.05f, 0.90f);
+        g_cfg.smoothTimeSec = Controller::Clamp(g_cfg.smoothTimeSec, 0.0f, 1.0f);
+        g_cfg.returnTimeSec = Controller::Clamp(g_cfg.returnTimeSec, 0.0f, 5.0f);
+        if (!g_cfg.enabled) {
+            g_ctrl.Reset();
+            g_activeOrbitMover = nullptr;
             return;
         }
+        EnsureHooks();
+    }
+
+    void Init(uintptr_t baseModule)
+    {
+        g_base = baseModule;
+        LoadSettings();
+
+        if (!g_cfg.enabled) {
+            Log::Event(Log::Tag::Game, "Right-stick camera orbit: off (set [Camera] RightStickOrbit=1 to turn it on)\n");
+            return;
+        }
+
+        if (!EnsureHooks()) return;
 
         Log::Event(Log::Tag::Game,
                    "Right-stick camera orbit: active in non-drag auto races (stick direction picks the side, deadzone=%.0f%%, snap=%.0fms, back=%.0fms)\n",

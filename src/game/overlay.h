@@ -59,6 +59,8 @@ namespace Overlay
     };
     void PushNotice(const std::string& kind, const std::string& title, const std::vector<std::string>& lines,
                     const XpGain& xp = XpGain());
+    // Real in-game player chat from the current race day room (never echoed Discord/server notices).
+    void PushChat(const std::string& sender, int level, const std::string& text);
     // Who is in the room and the car each picked (empty while picking), shown while not racing. An
     // empty list hides the card.
     struct LobbyPlayer

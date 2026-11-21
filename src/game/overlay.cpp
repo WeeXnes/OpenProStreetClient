@@ -15,10 +15,13 @@
 #include "imgui.h"
 #include "backends/imgui_impl_dx9.h"
 
+#include "game/atmosphere.h"
+#include "game/camera_orbit.h"
 #include "game/car.h"
 #include "game/car_lock.h"
 #include "game/d3d_hooks.h"
 #include "game/event_vote.h"
+#include "game/input_focus.h"
 #include "game/vault_fixes.h"
 #include "log.h"
 #include "net/server_link.h"
@@ -32,11 +35,21 @@ namespace Overlay
     static bool g_notices = true;
     static bool g_scoreboard = true;
     static bool g_pingShown = true;
+    static bool g_chatShown = true;
     static bool g_hudVisible = true;
     static int  g_toggleKey = VK_F3;
     static int  g_scoreboardKey = VK_TAB;
+    static int  g_settingsKey = VK_F4;
     static std::string g_toggleKeyName = "F3";
+    static std::string g_toggleKeyIni = "F3";
     static std::string g_scoreboardKeyName = "TAB";
+    static std::string g_scoreboardKeyIni = "Tab";
+    static std::string g_settingsKeyName = "F4";
+    static std::string g_settingsKeyIni = "F4";
+    static bool g_settingsOpen = false;
+    static int  g_settingsTab = 0;
+    static std::string g_settingsStatus;
+    static double g_settingsStatusUntil = 0.0;
     static Corner g_corner = TopRight;
     static float g_userScale = 1.0f;
     static uintptr_t g_baseModule = 0;
@@ -74,8 +87,18 @@ namespace Overlay
     static std::string g_trackKey, g_trackName, g_raceMode;
     static std::string g_requestedTrack, g_requestedMode;
     static std::string g_standingTrack, g_standingMode;
+    struct ChatToast
+    {
+        std::string sender;
+        std::string text;
+        int         level = 0;
+        double      duration = 9.0;
+        double      shownAt = -1.0;
+    };
+
     static std::vector<Board> g_boards;
     static std::deque<Notice> g_noticeQueue;
+    static std::deque<ChatToast> g_chatQueue;
 
     struct Guard
     {
@@ -1005,7 +1028,7 @@ namespace Overlay
     }
 
     // Short notifications, top centre, newest at the top. Each fades in, stays, and fades out.
-    static void DrawNotices(std::vector<Notice>& notices, double now, float s)
+    static float DrawNotices(std::vector<Notice>& notices, double now, float s)
     {
         const double fade = 0.25;
         const ImVec2 display = ImGui::GetIO().DisplaySize;
@@ -1055,6 +1078,57 @@ namespace Overlay
             if (n.xp.gained <= 0 || LevelUpAge(n.xp) < 0.0) continue;
             const double age = now - n.shownAt;
             if (age >= LevelUpAge(n.xp) && age <= LevelUpAge(n.xp) + LEVEL_UP_SECONDS) { DrawLevelUp(n.xp, age, s); break; }
+        }
+        return y;
+    }
+
+    // Live in-game room chat messages from players, stacked cleanly below notices.
+    static void DrawChatToasts(const std::vector<ChatToast>& chats, double now, float startY, float s)
+    {
+        const double fadeIn = 0.2;
+        const double fadeOut = 0.6;
+        const ImVec2 display = ImGui::GetIO().DisplaySize;
+        float y = startY;
+        int index = 0;
+        for (const ChatToast& msg : chats)
+        {
+            const double age = now - msg.shownAt;
+            float alpha = 1.0f;
+            if (age < fadeIn) alpha = static_cast<float>(age / fadeIn);
+            else if (age > msg.duration - fadeOut) alpha = static_cast<float>((msg.duration - age) / fadeOut);
+            if (alpha <= 0.01f) continue;
+
+            ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, y), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+            ImGui::SetNextWindowBgAlpha(Surface.w * alpha);
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * s, 8.0f * s));
+            ImGui::SetNextWindowSizeConstraints(ImVec2(240.0f * s, 0.0f), ImVec2(520.0f * s, display.y));
+            const std::string id = "##chat" + std::to_string(index++);
+            if (ImGui::Begin(id.c_str(), nullptr, PanelFlags))
+            {
+                const ImVec2 at = ImGui::GetCursorScreenPos();
+                ImGui::PushFont(g_fontSmall);
+                const float lineHeight = ImGui::GetTextLineHeight();
+                ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(at.x + 3.0f * s, at.y + lineHeight * 0.5f), 3.0f * s,
+                                                            ImGui::GetColorU32(ImVec4(Info.x, Info.y, Info.z, Info.w * alpha)));
+                ImGui::SetCursorScreenPos(ImVec2(at.x + 12.0f * s, at.y));
+                ImGui::TextColored(Text1, "%s", msg.sender.c_str());
+                if (msg.level > 0)
+                {
+                    ImGui::SameLine(0.0f, 6.0f * s);
+                    ImGui::PushFont(g_fontMicro);
+                    ImGui::TextColored(Text3, "Lv %d", msg.level);
+                    ImGui::PopFont();
+                }
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 12.0f * s);
+                ImGui::PushTextWrapPos(490.0f * s);
+                ImGui::TextColored(Text2, "%s", msg.text.c_str());
+                ImGui::PopTextWrapPos();
+                ImGui::PopFont();
+                y += ImGui::GetWindowHeight() + 6.0f * s;
+            }
+            ImGui::End();
+            ImGui::PopStyleVar(2);
         }
     }
 
@@ -1287,12 +1361,13 @@ namespace Overlay
         return fallback;
     }
 
-    static bool ToggleKeyPressed(int key, bool front)
+    static bool KeyJustPressed(int key, bool front)
     {
-        static bool wasDown = false;
-        const bool down = front && key > 0 && (GetAsyncKeyState(key) & 0x8000) != 0;
-        const bool pressed = down && !wasDown;
-        wasDown = down;
+        static bool down[256] = {};
+        if (key <= 0 || key >= 256) return false;
+        const bool isDown = front && (GetAsyncKeyState(key) & 0x8000) != 0;
+        const bool pressed = isDown && !down[key];
+        down[key] = isDown;
         return pressed;
     }
 
@@ -1691,11 +1766,398 @@ namespace Overlay
         DrawKeyHint(g_scoreboardKeyName.c_str(), "hold to view", s);
         ImGui::SameLine(0.0f, 14.0f * s);
         DrawKeyHint(g_toggleKeyName.c_str(), g_hudVisible ? "hide HUD" : "show HUD", s);
+        ImGui::SameLine(0.0f, 14.0f * s);
+        DrawKeyHint(g_settingsKeyName.c_str(), "settings", s);
         ImGui::PopFont();
 
         ImGui::End();
         ImGui::PopStyleVar();
         ImGui::PopStyleColor();
+    }
+
+    static const char* CornerIniName(Corner c)
+    {
+        switch (c)
+        {
+        case TopLeft: return "TopLeft";
+        case BottomLeft: return "BottomLeft";
+        case BottomRight: return "BottomRight";
+        default: return "TopRight";
+        }
+    }
+
+    static bool WriteIniBool(const std::string& path, const char* section, const char* key, bool value)
+    {
+        return WritePrivateProfileStringA(section, key, value ? "1" : "0", path.c_str()) != 0;
+    }
+
+    static bool WriteIniInt(const std::string& path, const char* section, const char* key, int value)
+    {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%d", value);
+        return WritePrivateProfileStringA(section, key, buf, path.c_str()) != 0;
+    }
+
+    static bool SaveSettingsToIni()
+    {
+        const std::string& path = Log::SettingsPath();
+        if (path.empty()) return false;
+
+        bool ok = true;
+        ok &= WriteIniBool(path, "Overlay", "Notifications", g_notices);
+        ok &= WriteIniBool(path, "Overlay", "LobbyCars", g_lobbyCarsShown);
+        ok &= WriteIniBool(path, "Overlay", "PaceBar", g_paceBarShown);
+        ok &= WriteIniBool(path, "Overlay", "Scoreboard", g_scoreboard);
+        ok &= WriteIniBool(path, "Overlay", "Ping", g_pingShown);
+        ok &= WriteIniBool(path, "Overlay", "Chat", g_chatShown);
+        ok &= WritePrivateProfileStringA("Overlay", "Position", CornerIniName(g_corner), path.c_str()) != 0;
+        ok &= WriteIniInt(path, "Overlay", "Scale", static_cast<int>(std::lround(g_userScale * 100.0f)));
+        ok &= WritePrivateProfileStringA("Overlay", "ToggleKey", g_toggleKeyIni.c_str(), path.c_str()) != 0;
+        ok &= WritePrivateProfileStringA("Overlay", "ScoreboardKey", g_scoreboardKeyIni.c_str(), path.c_str()) != 0;
+        ok &= WritePrivateProfileStringA("Overlay", "SettingsKey", g_settingsKeyIni.c_str(), path.c_str()) != 0;
+
+        static const char* const ATM_NAMES[3] = { "Day", "Dusk", "Night" };
+        ok &= WriteIniBool(path, "Atmosphere", "Enabled", Atmosphere::IsEnabled());
+        ok &= WritePrivateProfileStringA("Atmosphere", "Start", ATM_NAMES[Atmosphere::StartupPreset()], path.c_str()) != 0;
+
+        const CameraOrbit::Config cam = CameraOrbit::GetConfig();
+        ok &= WriteIniBool(path, "Camera", "RightStickOrbit", cam.enabled);
+        ok &= WriteIniBool(path, "Camera", "OrbitBlockShift", cam.blockShift);
+        ok &= WriteIniBool(path, "Camera", "OrbitInvertX", cam.invertX);
+        ok &= WriteIniInt(path, "Camera", "OrbitDeadzone", static_cast<int>(std::lround(cam.deadzone * 100.0f)));
+        ok &= WriteIniInt(path, "Camera", "OrbitSnapTime", static_cast<int>(std::lround(cam.smoothTimeSec * 1000.0f)));
+        ok &= WriteIniInt(path, "Camera", "OrbitBackTime", static_cast<int>(std::lround(cam.returnTimeSec * 1000.0f)));
+
+        const ReShifted::Config rs = ReShifted::GetConfig();
+        ok &= WriteIniBool(path, "Transmission", "ReShifted", rs.enabled);
+        ok &= WriteIniInt(path, "ReShifted", "Style", rs.style == 1 ? 1 : 2);
+        ok &= WriteIniBool(path, "ReShifted", "Indicator", rs.indicator);
+        ok &= WriteIniInt(path, "ReShifted", "ShortShiftFraction", static_cast<int>(std::lround(rs.shortShiftFraction * 100.0f)));
+        ok &= WriteIniInt(path, "ReShifted", "SportRedlineSafety", static_cast<int>(std::lround(rs.sportRedlineSafety * 100.0f)));
+        ok &= WriteIniInt(path, "ReShifted", "EcoThrottle", static_cast<int>(std::lround(rs.ecoThrottle * 100.0f)));
+        ok &= WriteIniInt(path, "ReShifted", "SportThrottle", static_cast<int>(std::lround(rs.sportThrottle * 100.0f)));
+        ok &= WriteIniInt(path, "ReShifted", "KickdownAggression", static_cast<int>(std::lround(rs.kickdownAggression * 100.0f)));
+        ok &= WriteIniBool(path, "ReShifted", "SportMemory", rs.sportMemory);
+        ok &= WriteIniBool(path, "ReShifted", "CoastDownshift", rs.coastDownshift);
+        ok &= WriteIniBool(path, "ReShifted", "SkipGears", rs.skipGears);
+        ok &= WriteIniBool(path, "ReShifted", "QuickShift", rs.quickShiftTime < 0.999f);
+        ok &= WriteIniInt(path, "ReShifted", "QuickShiftTime", static_cast<int>(std::lround(rs.quickShiftTime * 100.0f)));
+        ok &= WriteIniBool(path, "ReShifted", "Log", rs.logShifts);
+        return ok;
+    }
+
+    static bool DrawPillButton(const char* label, bool selected, float s, const char* idSuffix = "")
+    {
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f * s);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f * s, 5.0f * s));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, selected ? 0.0f : 1.0f);
+        if (selected)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Button, Text1);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, Text2);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.039f, 0.039f, 0.039f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Border, Text1);
+        }
+        else
+        {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 1.0f, 1.0f, 0.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 1.0f, 1.0f, 0.07f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.0f, 1.0f, 1.0f, 0.12f));
+            ImGui::PushStyleColor(ImGuiCol_Text, Text2);
+            ImGui::PushStyleColor(ImGuiCol_Border, Line);
+        }
+        std::string full = std::string(label) + idSuffix;
+        const bool clicked = ImGui::Button(full.c_str());
+        ImGui::PopStyleColor(5);
+        ImGui::PopStyleVar(3);
+        return clicked;
+    }
+
+    static void DrawKeySelector(const char* label, int* keyCode, std::string* keyName, std::string* keyIni, float s)
+    {
+        static const char* const KEY_OPTIONS[] = {
+            "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
+            "Tab", "Insert", "Home", "End", "Delete", "PageUp", "PageDown"
+        };
+        static const int KEY_COUNT = static_cast<int>(sizeof(KEY_OPTIONS) / sizeof(KEY_OPTIONS[0]));
+
+        int currentIndex = 0;
+        for (int i = 0; i < KEY_COUNT; ++i)
+        {
+            if (ParseOverlayKey(KEY_OPTIONS[i], 0, nullptr) == *keyCode) { currentIndex = i; break; }
+        }
+
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(Text2, "%s", label);
+        ImGui::SameLine(180.0f * s);
+        if (DrawPillButton("<", false, s, (std::string("##prev_") + label).c_str()))
+        {
+            currentIndex = (currentIndex + KEY_COUNT - 1) % KEY_COUNT;
+            *keyIni = KEY_OPTIONS[currentIndex];
+            *keyCode = ParseOverlayKey(keyIni->c_str(), *keyCode, keyName);
+        }
+        ImGui::SameLine(0.0f, 6.0f * s);
+        ImGui::PushFont(g_fontMono);
+        ImGui::TextColored(Text1, "%-6s", keyName->c_str());
+        ImGui::PopFont();
+        ImGui::SameLine(0.0f, 6.0f * s);
+        if (DrawPillButton(">", false, s, (std::string("##next_") + label).c_str()))
+        {
+            currentIndex = (currentIndex + 1) % KEY_COUNT;
+            *keyIni = KEY_OPTIONS[currentIndex];
+            *keyCode = ParseOverlayKey(keyIni->c_str(), *keyCode, keyName);
+        }
+    }
+
+    static void DrawSettingsWindow(double now, float s)
+    {
+        const ImVec2 display = ImGui::GetIO().DisplaySize;
+        ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(480.0f * s, 0.0f), ImVec2(560.0f * s, display.y - 40.0f * s));
+
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(1.0f, 1.0f, 1.0f, 0.05f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(1.0f, 1.0f, 1.0f, 0.10f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(1.0f, 1.0f, 1.0f, 0.16f));
+        ImGui::PushStyleColor(ImGuiCol_CheckMark, Text1);
+        ImGui::PushStyleColor(ImGuiCol_SliderGrab, Text2);
+        ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, Text1);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f * s);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f * s, 4.0f * s));
+        ImGui::PushStyleVar(ImGuiStyleVar_GrabRounding, 4.0f * s);
+
+        const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+                                       ImGuiWindowFlags_NoNav;
+        if (ImGui::Begin("##settings", nullptr, flags))
+        {
+            DrawCardTitle("OpenProStreet settings", Info, s);
+            ImGui::SameLine();
+            ImGui::PushFont(g_fontMono);
+            const std::string ver = "v" + g_version;
+            const float verW = ImGui::CalcTextSize(ver.c_str()).x;
+            ImGui::SetCursorPosX((std::max)(ImGui::GetCursorPosX() + 12.0f * s,
+                                             (ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x) - verW));
+            ImGui::TextColored(Text3, "%s", ver.c_str());
+            ImGui::PopFont();
+
+            ImGui::Dummy(ImVec2(0.0f, 6.0f * s));
+            ImGui::PushFont(g_fontSmall);
+            static const char* const TABS[] = { "Overlay", "Atmosphere", "Camera", "Gearbox" };
+            for (int t = 0; t < 4; ++t)
+            {
+                if (t > 0) ImGui::SameLine(0.0f, 6.0f * s);
+                if (DrawPillButton(TABS[t], g_settingsTab == t, s, "##tab")) g_settingsTab = t;
+            }
+            ImGui::Dummy(ImVec2(0.0f, 6.0f * s));
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0.0f, 6.0f * s));
+
+            if (g_settingsTab == 0)
+            {
+                ImGui::Checkbox("Show HUD right now", &g_hudVisible);
+                ImGui::Checkbox("Race notifications & XP popups", &g_notices);
+                ImGui::Checkbox("Lobby cars & ready status", &g_lobbyCarsShown);
+                ImGui::Checkbox("Live pace bar during races", &g_paceBarShown);
+                ImGui::Checkbox("Tab scoreboard", &g_scoreboard);
+                ImGui::Checkbox("Server & player ping (ms)", &g_pingShown);
+                ImGui::Checkbox("Live room chat messages", &g_chatShown);
+                ImGui::Dummy(ImVec2(0.0f, 4.0f * s));
+
+                int scalePct = static_cast<int>(std::lround(g_userScale * 100.0f));
+                ImGui::SetNextItemWidth(220.0f * s);
+                if (ImGui::SliderInt("Scale (%)", &scalePct, 50, 200, "%d%%"))
+                {
+                    if (scalePct < 50) scalePct = 50;
+                    if (scalePct > 200) scalePct = 200;
+                    g_userScale = scalePct / 100.0f;
+                }
+
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(Text2, "Corner");
+                ImGui::SameLine(100.0f * s);
+                struct CornerBtn { Corner value; const char* label; };
+                static const CornerBtn CORNERS[] = {
+                    { TopLeft, "Top L" }, { TopRight, "Top R" }, { BottomLeft, "Bot L" }, { BottomRight, "Bot R" }
+                };
+                for (int i = 0; i < 4; ++i)
+                {
+                    if (i > 0) ImGui::SameLine(0.0f, 5.0f * s);
+                    if (DrawPillButton(CORNERS[i].label, g_corner == CORNERS[i].value, s, "##corner"))
+                        g_corner = CORNERS[i].value;
+                }
+
+                ImGui::Dummy(ImVec2(0.0f, 4.0f * s));
+                DrawKeySelector("Toggle HUD key", &g_toggleKey, &g_toggleKeyName, &g_toggleKeyIni, s);
+                DrawKeySelector("Scoreboard key", &g_scoreboardKey, &g_scoreboardKeyName, &g_scoreboardKeyIni, s);
+                DrawKeySelector("Settings key", &g_settingsKey, &g_settingsKeyName, &g_settingsKeyIni, s);
+            }
+            else if (g_settingsTab == 1)
+            {
+                bool enabled = Atmosphere::IsEnabled();
+                if (ImGui::Checkbox("Enable day / dusk / night lighting & sky", &enabled))
+                    Atmosphere::SetEnabled(enabled);
+
+                static const char* const NAMES[3] = { "Day", "Dusk", "Night" };
+                ImGui::Dummy(ImVec2(0.0f, 4.0f * s));
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(Text2, "Live look");
+                ImGui::SameLine(120.0f * s);
+                const Atmosphere::Preset cur = Atmosphere::Current();
+                for (int p = 0; p < 3; ++p)
+                {
+                    if (p > 0) ImGui::SameLine(0.0f, 6.0f * s);
+                    if (!enabled) ImGui::BeginDisabled();
+                    if (DrawPillButton(NAMES[p], cur == p, s, "##atm_live"))
+                        Atmosphere::Set(static_cast<Atmosphere::Preset>(p), false);
+                    if (!enabled) ImGui::EndDisabled();
+                }
+
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(Text2, "Startup look");
+                ImGui::SameLine(120.0f * s);
+                const Atmosphere::Preset startP = Atmosphere::StartupPreset();
+                for (int p = 0; p < 3; ++p)
+                {
+                    if (p > 0) ImGui::SameLine(0.0f, 6.0f * s);
+                    if (DrawPillButton(NAMES[p], startP == p, s, "##atm_start"))
+                        Atmosphere::SetStartupPreset(static_cast<Atmosphere::Preset>(p));
+                }
+
+                ImGui::Dummy(ImVec2(0.0f, 6.0f * s));
+                ImGui::PushTextWrapPos(440.0f * s);
+                ImGui::TextColored(Text3, "Tip: F8 cycles presets and F9 cycles sky styles while driving. Sky and tint changes appear in the world immediately or on the next track load.");
+                ImGui::PopTextWrapPos();
+            }
+            else if (g_settingsTab == 2)
+            {
+                CameraOrbit::Config cam = CameraOrbit::GetConfig();
+                bool changed = false;
+                changed |= ImGui::Checkbox("Enable right-stick camera orbit (controller)", &cam.enabled);
+                if (!cam.enabled) ImGui::BeginDisabled();
+                changed |= ImGui::Checkbox("Block automatic gear shifts while orbiting", &cam.blockShift);
+                changed |= ImGui::Checkbox("Invert left / right orbit direction", &cam.invertX);
+                ImGui::Dummy(ImVec2(0.0f, 4.0f * s));
+
+                int dzPct = static_cast<int>(std::lround(cam.deadzone * 100.0f));
+                int snapMs = static_cast<int>(std::lround(cam.smoothTimeSec * 1000.0f));
+                int backMs = static_cast<int>(std::lround(cam.returnTimeSec * 1000.0f));
+                ImGui::SetNextItemWidth(220.0f * s);
+                if (ImGui::SliderInt("Stick deadzone (%)", &dzPct, 5, 90, "%d%%")) { cam.deadzone = dzPct / 100.0f; changed = true; }
+                ImGui::SetNextItemWidth(220.0f * s);
+                if (ImGui::SliderInt("Snap time (ms)", &snapMs, 0, 1000, "%d ms")) { cam.smoothTimeSec = snapMs / 1000.0f; changed = true; }
+                ImGui::SetNextItemWidth(220.0f * s);
+                if (ImGui::SliderInt("Return time (ms)", &backMs, 0, 5000, "%d ms")) { cam.returnTimeSec = backMs / 1000.0f; changed = true; }
+                if (!cam.enabled) ImGui::EndDisabled();
+
+                if (changed) CameraOrbit::SetConfig(cam);
+            }
+            else
+            {
+                ReShifted::Config rs = ReShifted::GetConfig();
+                bool changed = false;
+                changed |= ImGui::Checkbox("Enable ReShifted dynamic automatic gearbox", &rs.enabled);
+                if (!rs.enabled) ImGui::BeginDisabled();
+
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(Text2, "Style");
+                ImGui::SameLine(100.0f * s);
+                if (DrawPillButton("Adaptive", rs.style != 1, s, "##rs_adapt")) { rs.style = 2; changed = true; }
+                ImGui::SameLine(0.0f, 6.0f * s);
+                if (DrawPillButton("Classic", rs.style == 1, s, "##rs_classic")) { rs.style = 1; changed = true; }
+
+                changed |= ImGui::Checkbox("Show ECO / SPORT badge", &rs.indicator);
+
+                int shortPct = static_cast<int>(std::lround(rs.shortShiftFraction * 100.0f));
+                int safetyPct = static_cast<int>(std::lround(rs.sportRedlineSafety * 100.0f));
+                int ecoPct = static_cast<int>(std::lround(rs.ecoThrottle * 100.0f));
+                int sportPct = static_cast<int>(std::lround(rs.sportThrottle * 100.0f));
+                int kickPct = static_cast<int>(std::lround(rs.kickdownAggression * 100.0f));
+                int quickPct = static_cast<int>(std::lround(rs.quickShiftTime * 100.0f));
+
+                ImGui::SetNextItemWidth(200.0f * s);
+                if (ImGui::SliderInt("Short-shift (%)", &shortPct, 15, 55, "%d%%")) { rs.shortShiftFraction = shortPct / 100.0f; changed = true; }
+                ImGui::SetNextItemWidth(200.0f * s);
+                if (ImGui::SliderInt("Sport redline (%)", &safetyPct, 88, 99, "%d%%")) { rs.sportRedlineSafety = safetyPct / 100.0f; changed = true; }
+                ImGui::SetNextItemWidth(200.0f * s);
+                if (ImGui::SliderInt("Eco max throttle (%)", &ecoPct, 0, 80, "%d%%"))
+                {
+                    rs.ecoThrottle = ecoPct / 100.0f;
+                    if (rs.sportThrottle < rs.ecoThrottle + 0.10f) rs.sportThrottle = rs.ecoThrottle + 0.10f;
+                    changed = true;
+                }
+                ImGui::SetNextItemWidth(200.0f * s);
+                if (ImGui::SliderInt("Sport min throttle (%)", &sportPct, 10, 100, "%d%%"))
+                {
+                    rs.sportThrottle = sportPct / 100.0f;
+                    if (rs.sportThrottle < rs.ecoThrottle + 0.10f) rs.sportThrottle = rs.ecoThrottle + 0.10f;
+                    changed = true;
+                }
+                ImGui::SetNextItemWidth(200.0f * s);
+                if (ImGui::SliderInt("Kickdown eagerness (%)", &kickPct, 60, 125, "%d%%")) { rs.kickdownAggression = kickPct / 100.0f; changed = true; }
+
+                const bool classic = rs.style == 1;
+                if (classic) ImGui::BeginDisabled();
+                ImGui::SetNextItemWidth(200.0f * s);
+                if (ImGui::SliderInt("Quick shift time (%)", &quickPct, 30, 100, "%d%%")) { rs.quickShiftTime = quickPct / 100.0f; changed = true; }
+                changed |= ImGui::Checkbox("Sport memory", &rs.sportMemory);
+                ImGui::SameLine(0.0f, 14.0f * s);
+                changed |= ImGui::Checkbox("Coast downshift", &rs.coastDownshift);
+                ImGui::SameLine(0.0f, 14.0f * s);
+                changed |= ImGui::Checkbox("Skip-gear kickdown", &rs.skipGears);
+                if (classic) ImGui::EndDisabled();
+
+                changed |= ImGui::Checkbox("Log shift decisions to log file", &rs.logShifts);
+                if (!rs.enabled) ImGui::EndDisabled();
+
+                if (changed) ReShifted::SetConfig(rs);
+            }
+
+            ImGui::Dummy(ImVec2(0.0f, 8.0f * s));
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0.0f, 8.0f * s));
+
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f * s);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f * s, 7.0f * s));
+            ImGui::PushStyleColor(ImGuiCol_Button, Text1);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, Text2);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.039f, 0.039f, 0.039f, 1.0f));
+            if (ImGui::Button("Save to INI"))
+            {
+                if (SaveSettingsToIni()) g_settingsStatus = "Saved to INI";
+                else g_settingsStatus = "Could not write INI";
+                g_settingsStatusUntil = now + 2.5;
+            }
+            ImGui::PopStyleColor(4);
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 1.0f, 1.0f, 0.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 1.0f, 1.0f, 0.06f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.0f, 1.0f, 1.0f, 0.10f));
+            ImGui::PushStyleColor(ImGuiCol_Text, Text2);
+            ImGui::PushStyleColor(ImGuiCol_Border, Line);
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+            if (ImGui::Button("Close"))
+            {
+                g_settingsOpen = false;
+                InputFocus::SetCaptured(false);
+            }
+            ImGui::PopStyleVar(3);
+            ImGui::PopStyleColor(5);
+
+            if (!g_settingsStatus.empty() && now < g_settingsStatusUntil)
+            {
+                ImGui::SameLine(0.0f, 14.0f * s);
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(g_settingsStatus == "Saved to INI" ? Success : Warning, "%s", g_settingsStatus.c_str());
+            }
+
+            ImGui::Dummy(ImVec2(0.0f, 6.0f * s));
+            DrawKeyHint((g_settingsKeyName + "/Esc").c_str(), "close", s);
+            ImGui::PopFont();
+        }
+        ImGui::End();
+        ImGui::PopStyleVar(3);
+        ImGui::PopStyleColor(6);
     }
 
     static void BeforePresent(IDirect3DDevice9* device, IDirect3DSwapChain9*)
@@ -1705,13 +2167,23 @@ namespace Overlay
         if (!g_ready) return;
 
         const bool front = GameInFront();
-        EventVote::Poll(front);
+        EventVote::Poll(front && !g_settingsOpen);
         const EventVote::View vote = EventVote::Snapshot();
-        if (ToggleKeyPressed(g_toggleKey, front && !vote.windowOpen))
+        if (KeyJustPressed(g_settingsKey, front && !vote.windowOpen))
+        {
+            g_settingsOpen = !g_settingsOpen;
+            InputFocus::SetCaptured(g_settingsOpen);
+        }
+        else if (g_settingsOpen && (!front || KeyJustPressed(VK_ESCAPE, front)))
+        {
+            g_settingsOpen = false;
+            InputFocus::SetCaptured(false);
+        }
+        if (KeyJustPressed(g_toggleKey, front && !vote.windowOpen && !g_settingsOpen))
         {
             g_hudVisible = !g_hudVisible;
         }
-        const bool scoreboardHeld = g_scoreboard && front && !vote.windowOpen && g_scoreboardKey > 0 &&
+        const bool scoreboardHeld = g_scoreboard && front && !vote.windowOpen && !g_settingsOpen && g_scoreboardKey > 0 &&
                                     (GetAsyncKeyState(g_scoreboardKey) & 0x8000) != 0;
 
         // Copy what to show, so the other threads aren't held up while drawing.
@@ -1720,6 +2192,7 @@ namespace Overlay
         int lobbyEvent = 0, lobbyEvents = 0;
         std::vector<Board> boards;
         std::vector<Notice> notices;
+        std::vector<ChatToast> chats;
         std::vector<LobbyPlayer> lobbyPlayers;
         LobbyTimerState lobbyTimer;
         const double now = Now();
@@ -1750,11 +2223,21 @@ namespace Overlay
                 if (g_noticeQueue[i].shownAt < 0.0) g_noticeQueue[i].shownAt = now;
                 if ((g_hudVisible && g_notices) || g_noticeQueue[i].kind == "refused") notices.push_back(g_noticeQueue[i]);
             }
+            for (std::deque<ChatToast>::iterator it = g_chatQueue.begin(); it != g_chatQueue.end(); )
+            {
+                if (it->shownAt >= 0.0 && now - it->shownAt > it->duration) it = g_chatQueue.erase(it);
+                else ++it;
+            }
+            for (size_t i = 0; i < g_chatQueue.size() && chats.size() < 4; ++i)
+            {
+                if (g_chatQueue[i].shownAt < 0.0) g_chatQueue[i].shownAt = now;
+                if (g_hudVisible && g_chatShown) chats.push_back(g_chatQueue[i]);
+            }
         }
         const std::vector<RaceResults::LiveRacer> liveRacers = scoreboardHeld ? RaceResults::GetLiveRacers() : std::vector<RaceResults::LiveRacer>();
         const bool showScoreboard = scoreboardHeld && (!liveRacers.empty() || !lobbyPlayers.empty());
         const ReShifted::Indicator shift = g_hudVisible ? ReShifted::GetIndicator() : ReShifted::Indicator();
-        if (!showStanding && !showLobby && !showScoreboard && notices.empty() && !g_test && !vote.windowOpen && !vote.voteActive && !shift.shown) return;
+        if (!showStanding && !showLobby && !showScoreboard && notices.empty() && chats.empty() && !g_test && !vote.windowOpen && !vote.voteActive && !g_settingsOpen && !shift.shown) return;
         if (!g_drawnOnce)
         {
             g_drawnOnce = true;
@@ -1776,12 +2259,22 @@ namespace Overlay
         if (io.DeltaTime <= 0.0f) io.DeltaTime = 1.0f / 60.0f;
         g_last = tick;
 
-        // The vote window takes the mouse, read straight from Windows (the overlay has no window
+        const float targetScale = ScaleFor(device);
+        if (std::fabs(g_fontScaleBase * io.FontGlobalScale - targetScale) > 0.001f && g_fontScaleBase > 0.0f)
+        {
+            io.FontGlobalScale = targetScale / g_fontScaleBase;
+            Style(targetScale);
+        }
+
+        // Modal windows take the mouse, read straight from Windows (the overlay has no window
         // procedure of its own), scaled from the window's client area to the back buffer.
-        io.MouseDrawCursor = vote.windowOpen;
+        const bool wantMouse = vote.windowOpen || g_settingsOpen;
+        if (wantMouse) io.ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
+        else io.ConfigFlags |= ImGuiConfigFlags_NoMouse;
+        io.MouseDrawCursor = wantMouse;
         io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
         io.MouseDown[0] = false;
-        if (vote.windowOpen)
+        if (wantMouse)
         {
             D3DDEVICE_CREATION_PARAMETERS params = {};
             HWND window = SUCCEEDED(device->GetCreationParameters(&params)) && params.hFocusWindow ? params.hFocusWindow : GetForegroundWindow();
@@ -1800,10 +2293,13 @@ namespace Overlay
         const RaceResults::LivePace pace = (showStanding && paceBarShown) ? RaceResults::GetLivePace() : RaceResults::LivePace();
         if (showStanding) DrawStanding(trackName, mode, boards, paceBarShown, pace, pingMs, s);
         if (showLobby) DrawLobby(lobbyRoom, lobbyAtmosphere, lobbyEvent, lobbyEvents, lobbyPlayers, lobbyTimer, vote, pingMs, s);
-        if (!notices.empty()) DrawNotices(notices, now, s);
+        float topCenterY = 24.0f * s;
+        if (!notices.empty()) topCenterY = DrawNotices(notices, now, s);
+        if (!chats.empty()) DrawChatToasts(chats, now, topCenterY, s);
         if (shift.shown) DrawShiftIndicator(shift, s);
         if (vote.voteActive) DrawVotePopup(vote, s);
         if (vote.windowOpen) DrawVoteWindow(vote, s);
+        if (g_settingsOpen) DrawSettingsWindow(now, s);
         if (showScoreboard) DrawScoreboard(trackName, mode, boards, lobbyRoom, lobbyAtmosphere, lobbyEvent, lobbyEvents,
                                            lobbyPlayers, lobbyTimer, vote, liveRacers, pingMs, s);
         if (g_test)
@@ -1931,14 +2427,20 @@ namespace Overlay
             g_notices = GetPrivateProfileIntA("Overlay", "Notifications", 1, settings.c_str()) != 0;
             g_scoreboard = GetPrivateProfileIntA("Overlay", "Scoreboard", 1, settings.c_str()) != 0;
             g_pingShown = GetPrivateProfileIntA("Overlay", "Ping", 1, settings.c_str()) != 0;
+            g_chatShown = GetPrivateProfileIntA("Overlay", "Chat", 1, settings.c_str()) != 0;
             g_test = GetPrivateProfileIntA("Overlay", "Test", 0, settings.c_str()) != 0;
             g_lobbyCarsShown = GetPrivateProfileIntA("Overlay", "LobbyCars", 1, settings.c_str()) != 0;
             g_paceBarShown = GetPrivateProfileIntA("Overlay", "PaceBar", 1, settings.c_str()) != 0;
             char keyText[32] = {};
             GetPrivateProfileStringA("Overlay", "ToggleKey", "F3", keyText, sizeof(keyText), settings.c_str());
+            g_toggleKeyIni = keyText[0] ? keyText : "F3";
             g_toggleKey = ParseOverlayKey(keyText, VK_F3, &g_toggleKeyName);
             GetPrivateProfileStringA("Overlay", "ScoreboardKey", "Tab", keyText, sizeof(keyText), settings.c_str());
+            g_scoreboardKeyIni = keyText[0] ? keyText : "Tab";
             g_scoreboardKey = ParseOverlayKey(keyText, VK_TAB, &g_scoreboardKeyName);
+            GetPrivateProfileStringA("Overlay", "SettingsKey", "F4", keyText, sizeof(keyText), settings.c_str());
+            g_settingsKeyIni = keyText[0] ? keyText : "F4";
+            g_settingsKey = ParseOverlayKey(keyText, VK_F4, &g_settingsKeyName);
             char corner[32] = {};
             GetPrivateProfileStringA("Overlay", "Position", "TopRight", corner, sizeof(corner), settings.c_str());
             if (_stricmp(corner, "TopLeft") == 0) g_corner = TopLeft;
@@ -2021,6 +2523,7 @@ namespace Overlay
         g_lobbyEventIndex = 0;
         g_lobbyEventCount = 0;
         g_lobbyPlayers.clear();
+        g_chatQueue.clear();
         g_lobbyTimer = LobbyTimerState();
     }
 
@@ -2115,5 +2618,17 @@ namespace Overlay
         // The result changes the standing, so the card asks again on the next poll.
         g_requestedTrack.clear();
         g_requestedMode.clear();
+    }
+
+    void PushChat(const std::string& sender, int level, const std::string& text)
+    {
+        if (!g_enabled || sender.empty() || text.empty()) return;
+        Guard guard;
+        ChatToast msg;
+        msg.sender = sender;
+        msg.level = level;
+        msg.text = text;
+        g_chatQueue.push_back(msg);
+        while (g_chatQueue.size() > 6) g_chatQueue.pop_front();
     }
 }

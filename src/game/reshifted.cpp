@@ -233,7 +233,7 @@ namespace ReShifted
         void __attribute__((thiscall)) Hook_Engine_Update(void* engine, float dt)
         {
             void* input = nullptr;
-            if (IsLocalPlayerAutoEngine(engine, &input)) {
+            if (g_cfg.enabled && IsLocalPlayerAutoEngine(engine, &input)) {
                 if (engine != g_cachedEngine) {
                     g_ctrl.Reset();
                     g_lastLoggedPotential = -1;
@@ -276,7 +276,7 @@ namespace ReShifted
         // quicker the harder the car has been driven.
         int __attribute__((thiscall)) Hook_Engine_ChangeGear(void* engine, int gear)
         {
-            if (!g_inAutoUpdate || engine != g_cachedEngine || !g_profile.valid) {
+            if (!g_cfg.enabled || !g_inAutoUpdate || engine != g_cachedEngine || !g_profile.valid) {
                 return g_origChangeGear(engine, gear);
             }
 
@@ -312,7 +312,7 @@ namespace ReShifted
         int __attribute__((thiscall)) Hook_Engine_GetShiftPotential(void* engine, int gear, float rpm, float wheelRPM)
         {
             void* input = nullptr;
-            if (!IsLocalPlayerAutoEngine(engine, &input) || gear <= 1 || gear >= kMaxGears) {
+            if (!g_cfg.enabled || !IsLocalPlayerAutoEngine(engine, &input) || gear <= 1 || gear >= kMaxGears) {
                 return g_origGetShiftPotential(engine, gear, rpm, wheelRPM);
             }
 
@@ -421,24 +421,22 @@ namespace ReShifted
         return out;
     }
 
-    void Init(uintptr_t baseModule)
-    {
-        g_base = baseModule;
-        LoadSettings();
+    static bool g_hooksInstalled = false;
+    static bool g_changeGearHooked = false;
 
-        if (!g_cfg.enabled) {
-            Log::Event(Log::Tag::Game, "ReShifted dynamic automatic: off (set [Transmission] ReShifted=1 to turn it on)\n");
-            return;
-        }
+    static bool EnsureHooks()
+    {
+        if (g_hooksInstalled) return true;
+        if (g_base == 0) return false;
 
         const MH_STATUS initStatus = MH_Initialize();
         if (initStatus != MH_OK && initStatus != MH_ERROR_ALREADY_INITIALIZED) {
             Log::Warn("[ReShifted] MH_Initialize failed (%d)\n", static_cast<int>(initStatus));
-            return;
+            return false;
         }
 
-        void* updateTarget = reinterpret_cast<void*>(baseModule + ENGINE_UPDATE_RVA);
-        void* shiftPotTarget = reinterpret_cast<void*>(baseModule + ENGINE_SHIFT_POTENTIAL_RVA);
+        void* updateTarget = reinterpret_cast<void*>(g_base + ENGINE_UPDATE_RVA);
+        void* shiftPotTarget = reinterpret_cast<void*>(g_base + ENGINE_SHIFT_POTENTIAL_RVA);
 
         const bool ok1 = MH_CreateHook(updateTarget, reinterpret_cast<void*>(Hook_Engine_Update),
                                        reinterpret_cast<void**>(&g_origEngineUpdate)) == MH_OK &&
@@ -450,24 +448,68 @@ namespace ReShifted
         if (!ok1 || !ok2) {
             Log::Warn("[ReShifted] Failed to install hooks (update=%d shiftPot=%d)\n",
                       ok1 ? 1 : 0, ok2 ? 1 : 0);
-            return;
+            return false;
         }
 
         // Optional extra: without this hook the gearbox still works, one gear at a time at stock speed.
-        void* changeGearTarget = reinterpret_cast<void*>(baseModule + ENGINE_CHANGE_GEAR_RVA);
-        const bool ok3 = MH_CreateHook(changeGearTarget, reinterpret_cast<void*>(Hook_Engine_ChangeGear),
-                                       reinterpret_cast<void**>(&g_origChangeGear)) == MH_OK &&
-                         MH_EnableHook(changeGearTarget) == MH_OK;
-        if (!ok3) {
+        void* changeGearTarget = reinterpret_cast<void*>(g_base + ENGINE_CHANGE_GEAR_RVA);
+        g_changeGearHooked = MH_CreateHook(changeGearTarget, reinterpret_cast<void*>(Hook_Engine_ChangeGear),
+                                           reinterpret_cast<void**>(&g_origChangeGear)) == MH_OK &&
+                             MH_EnableHook(changeGearTarget) == MH_OK;
+        if (!g_changeGearHooked) {
             Log::Warn("[ReShifted] Gear change hook failed; skip-gear kickdown and quick shifts are off\n");
         }
+
+        g_hooksInstalled = true;
+        return true;
+    }
+
+    Config GetConfig()
+    {
+        return g_cfg;
+    }
+
+    void SetConfig(const Config& cfg)
+    {
+        const float prevSafety = g_cfg.sportRedlineSafety;
+        g_cfg = cfg;
+        g_cfg.shortShiftFraction = ShiftProfile::Clamp(g_cfg.shortShiftFraction, 0.15f, 0.55f);
+        g_cfg.sportRedlineSafety = ShiftProfile::Clamp(g_cfg.sportRedlineSafety, 0.88f, 0.99f);
+        g_cfg.kickdownAggression = ShiftProfile::Clamp(g_cfg.kickdownAggression, 0.60f, 1.25f);
+        g_cfg.ecoThrottle = ShiftProfile::Clamp(g_cfg.ecoThrottle, 0.0f, 0.80f);
+        g_cfg.sportThrottle = ShiftProfile::Clamp(g_cfg.sportThrottle, g_cfg.ecoThrottle + 0.10f, 1.0f);
+        g_cfg.style = (g_cfg.style == 1) ? 1 : 2;
+        g_cfg.quickShiftTime = ShiftProfile::Clamp(g_cfg.quickShiftTime, 0.30f, 1.00f);
+        if (std::fabs(g_cfg.sportRedlineSafety - prevSafety) > 0.0001f) {
+            g_profile.valid = false;
+        }
+        if (!g_cfg.enabled) {
+            g_ctrl.Reset();
+            g_lastLoggedPotential = -1;
+            g_skipTarget = -1;
+            return;
+        }
+        EnsureHooks();
+    }
+
+    void Init(uintptr_t baseModule)
+    {
+        g_base = baseModule;
+        LoadSettings();
+
+        if (!g_cfg.enabled) {
+            Log::Event(Log::Tag::Game, "ReShifted dynamic automatic: off (set [Transmission] ReShifted=1 to turn it on)\n");
+            return;
+        }
+
+        if (!EnsureHooks()) return;
 
         Log::Event(Log::Tag::Game,
                    "ReShifted dynamic automatic: active (style=%s, memory=%d, shortShift=%.0f%%, sportSafety=%.0f%%, eco<=%.0f%%, sport>=%.0f%%, coast=%d, skipGears=%d, shiftTime=%.0f%%, indicator=%d)\n",
                    g_cfg.style == 1 ? "Classic" : "Adaptive", g_cfg.sportMemory ? 1 : 0,
                    g_cfg.shortShiftFraction * 100.0f, g_cfg.sportRedlineSafety * 100.0f,
                    g_cfg.ecoThrottle * 100.0f, g_cfg.sportThrottle * 100.0f, g_cfg.coastDownshift ? 1 : 0,
-                   (ok3 && g_cfg.skipGears) ? 1 : 0, ok3 ? g_cfg.quickShiftTime * 100.0f : 100.0f,
+                   (g_changeGearHooked && g_cfg.skipGears) ? 1 : 0, g_changeGearHooked ? g_cfg.quickShiftTime * 100.0f : 100.0f,
                    g_cfg.indicator ? 1 : 0);
     }
 }

@@ -127,7 +127,7 @@ The plugin writes `%LOCALAPPDATA%\OpenProStreet\event_catalog.json`. Copy it nex
 
 ### Overlay
 
-During a race on an OpenProStreet server, a card in a corner shows where you stand on that track, layout and mode: the server record and its holder, your best and place, the time just ahead of yours to beat, and your live latency to the server. In a room between races, it shows who is in the room, their cars, ready status, latency, and any allowed car restrictions. Hold **Tab** in a race or lobby for a centered live scoreboard with everyone's rank, car, times/scores and ping, and press **F3** to hide or show the corner HUD. After each race, a short notification says what it meant: a new personal best or server record with your place, the XP you earned, a new level, or why the result didn't count. It's drawn with Dear ImGui on the game's Direct3D 9 frames, in the style of the website, and never takes the mouse or keyboard.
+During a race on an OpenProStreet server, a card in a corner shows where you stand on that track, layout and mode: the server record and its holder, your best and place, the time just ahead of yours to beat, and your live latency to the server. In a room between races, it shows who is in the room, their cars, ready status, latency, and any allowed car restrictions. Hold **Tab** in a race or lobby for a centered live scoreboard with everyone's rank, car, times/scores and ping, press **F3** to hide or show the corner HUD, and press **F4** to open the in-game settings menu (to adjust Overlay, Atmosphere, Camera, and ReShifted settings live and save them back to `OpenProStreetClient.ini`). Real in-game chat messages from players in your room also pop up cleanly as live overlay messages, and after each race a short notification says what it meant: a new personal best or server record with your place, the XP you earned, a new level, or why the result didn't count. It's drawn with Dear ImGui on the game's Direct3D 9 frames, in the style of the website.
 
 ```ini
 [Overlay]
@@ -135,12 +135,15 @@ Enabled=1
 Notifications=1
 Scoreboard=1        ; 1 enables the centered live scoreboard when holding ScoreboardKey
 Ping=1              ; 1 shows server and player latency (ms) in the overlay
+Chat=1              ; 1 shows live in-game chat messages from players in your room
 Position=TopRight   ; TopLeft, TopRight, BottomLeft or BottomRight
 Scale=100           ; percent, 50 to 200
 Test=0              ; 1 always shows a small panel bottom left, to check the overlay reaches the screen
 LobbyCars=1         ; in a room, outside races, a card with everyone in it and the car they picked
+PaceBar=1           ; 1 shows the live pace bar while racing
 ToggleKey=F3        ; hotkey to hide or show the corner HUD
 ScoreboardKey=Tab   ; hold to show the centered live scoreboard
+SettingsKey=F4      ; hotkey to open the in-game settings menu
 ```
 
 ### Day and night
