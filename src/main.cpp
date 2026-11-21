@@ -10,6 +10,7 @@
 #include "game/atmosphere.h"
 #include "game/camera_orbit.h"
 #include "game/graphics.h"
+#include "game/hooks.h"
 #include "game/reshifted.h"
 #include "game/textures.h"
 #include "game/lanfix.h"
@@ -28,6 +29,26 @@
 
 discord::Core *discordCore = nullptr;
 static HMODULE g_selfModule = nullptr;
+static std::string g_gameDir;
+static void* g_origCrtStartup = nullptr;
+
+// Unpacked nfs.exe v1.1 __tmainCRTStartup (jumped to from AddressOfEntryPoint 0x828C25);
+// starts with `push 0x10; push 0xA42D70` (7 bytes).
+static const uintptr_t CRT_STARTUP = 0x4289CD;
+
+static void EnsureGameWorkingDirectory() {
+  if (!g_gameDir.empty()) {
+    SetCurrentDirectoryA(g_gameDir.c_str());
+  }
+}
+
+// Ultimate ASI Loader saves GetCurrentDirectoryW before loading plugins and restores it via
+// SetCurrentDirectoryW after each LoadLibraryW returns, undoing DllMain's SetCurrentDirectoryA.
+// Re-apply right as __tmainCRTStartup starts (after LoadEverything finishes, before WinMain/d3d9).
+static int __cdecl CrtStartupHook() {
+  EnsureGameWorkingDirectory();
+  return reinterpret_cast<int(__cdecl*)()>(g_origCrtStartup)();
+}
 
 const std::string baseVersion = "10.22";
 #ifdef OPENPROSTREET_VERSION_SUFFIX
@@ -101,7 +122,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
     const std::string exeStr(procname);
     const size_t slash = exeStr.find_last_of("\\/");
     if (slash != std::string::npos) {
-      SetCurrentDirectoryA(exeStr.substr(0, slash).c_str());
+      g_gameDir = exeStr.substr(0, slash);
+      EnsureGameWorkingDirectory();
     }
 
     Log::Init(hModule);
@@ -124,6 +146,9 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
       if (notice) CloseHandle(notice);
       return TRUE;
     }
+
+    Hooks::InstallDetour(reinterpret_cast<void*>(baseModule + CRT_STARTUP),
+                         reinterpret_cast<void*>(CrtStartupHook), &g_origCrtStartup, 7);
 
     ServerLink::Init(baseModule);
     LANFix::Init();
