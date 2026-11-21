@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <algorithm>
 #include <deque>
 
@@ -82,6 +83,7 @@ namespace Overlay
     static int g_lobbyEventCount = 0;
     static std::vector<LobbyPlayer> g_lobbyPlayers;
     static LobbyTimerState g_lobbyTimer;
+    static int64_t g_lobbyTimerUpdatedAt = 0;
     static bool g_lobbyCarsShown = true;
     static bool g_paceBarShown = true;
     static std::string g_trackKey, g_trackName, g_raceMode;
@@ -2505,6 +2507,22 @@ namespace Overlay
     {
         Guard guard;
         g_lobbyTimer = timer;
+        g_lobbyTimerUpdatedAt = static_cast<int64_t>(time(nullptr));
+    }
+
+    LobbySnapshot GetLobbySnapshot()
+    {
+        Guard guard;
+        LobbySnapshot snap;
+        snap.inRoom = !g_lobbyPlayers.empty() || !g_lobbyRoom.empty();
+        snap.room = g_lobbyRoom;
+        snap.atmosphere = g_lobbyAtmosphere;
+        snap.eventIndex = g_lobbyEventIndex;
+        snap.eventCount = g_lobbyEventCount;
+        snap.players = g_lobbyPlayers;
+        snap.timer = g_lobbyTimer;
+        snap.timerUpdatedAt = g_lobbyTimerUpdatedAt;
+        return snap;
     }
 
     bool GetPausedTimerSeconds(int* outSeconds)
@@ -2525,6 +2543,7 @@ namespace Overlay
         g_lobbyPlayers.clear();
         g_chatQueue.clear();
         g_lobbyTimer = LobbyTimerState();
+        g_lobbyTimerUpdatedAt = 0;
     }
 
     void SetStanding(const std::string& trackKey, const std::string& raceMode, const std::vector<Board>& boards)

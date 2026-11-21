@@ -82,9 +82,22 @@ namespace Overlay
         int         allReadyIn = 0;
     };
 
+    struct LobbySnapshot
+    {
+        bool                     inRoom = false;
+        std::string              room;
+        std::string              atmosphere;
+        int                      eventIndex = 0;
+        int                      eventCount = 0;
+        std::vector<LobbyPlayer> players;
+        LobbyTimerState          timer;
+        int64_t                  timerUpdatedAt = 0;
+    };
+
     void SetLobbyState(const std::string& room, const std::string& atmosphere, int eventIndex, int eventCount,
                        const std::vector<LobbyPlayer>& players);
     void SetLobbyTimer(const LobbyTimerState& timer);
+    LobbySnapshot GetLobbySnapshot();
     bool GetPausedTimerSeconds(int* outSeconds);
     void ResetRoomState();
 
