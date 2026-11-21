@@ -66,6 +66,7 @@ jobs:
   triggers:
   - type: BranchUpdateTrigger
     branches: master
+    paths: src/main.cpp
     userMatch: anyone
   retryCondition: never
   maxAttempts: 4
