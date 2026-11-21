@@ -17,12 +17,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "WeeXnes"
             VALUE "FileDescription", "OpenProStreet Client, a community plugin for Need for Speed: ProStreet"
-            VALUE "FileVersion", "@CLIENT_VERSION_MAJOR@.@CLIENT_VERSION_MINOR@.0.0"
+            VALUE "FileVersion", "@CLIENT_VERSION_DISPLAY@"
             VALUE "InternalName", "OpenProStreetClient"
             VALUE "LegalCopyright", "Copyright (C) WeeXnes. Not affiliated with Electronic Arts."
             VALUE "OriginalFilename", "OpenProStreetClient.asi"
             VALUE "ProductName", "OpenProStreet Client"
-            VALUE "ProductVersion", "@CLIENT_VERSION_MAJOR@.@CLIENT_VERSION_MINOR@.0.0"
+            VALUE "ProductVersion", "@CLIENT_VERSION_DISPLAY@"
         END
     END
     BLOCK "VarFileInfo"

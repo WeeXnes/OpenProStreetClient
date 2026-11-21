@@ -26,7 +26,12 @@
 
 discord::Core *discordCore = nullptr;
 
-const std::string version = "10.22";
+const std::string baseVersion = "10.22";
+#ifdef OPENPROSTREET_VERSION_SUFFIX
+const std::string version = baseVersion + OPENPROSTREET_VERSION_SUFFIX;
+#else
+const std::string version = baseVersion;
+#endif
 
 // Every hook patches nfs.exe v1.1 at fixed addresses, so the client only runs on that layout. The
 // game's version check pushes 1, 1 here (MultiFix reads the same bytes). A packed exe, such as the
