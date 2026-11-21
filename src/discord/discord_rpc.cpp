@@ -154,15 +154,32 @@ namespace
         return out;
     }
 
-    static void AttachDiscordCallbacks(discord::Core* core)
+    static std::string BuildLaunchCommand(HMODULE clientModule)
     {
-        if (!core) return;
+        char asiPath[MAX_PATH] = {};
+        if (clientModule && GetModuleFileNameA(clientModule, asiPath, MAX_PATH) > 0) {
+            char sysDir[MAX_PATH] = {};
+            UINT sysLen = GetSystemWow64DirectoryA(sysDir, MAX_PATH);
+            if (sysLen == 0 || sysLen >= MAX_PATH) sysLen = GetSystemDirectoryA(sysDir, MAX_PATH);
+            const std::string rundll = (sysLen > 0 && sysLen < MAX_PATH)
+                ? (std::string(sysDir) + "\\rundll32.exe")
+                : "rundll32.exe";
+            return "\"" + rundll + "\" \"" + std::string(asiPath) + "\",LaunchGame";
+        }
         char exePath[MAX_PATH] = {};
         if (GetModuleFileNameA(nullptr, exePath, MAX_PATH) > 0) {
             std::string cmd(exePath);
-            if (cmd.find(' ') != std::string::npos && cmd.front() != '"') {
-                cmd = "\"" + cmd + "\"";
-            }
+            if (cmd.find(' ') != std::string::npos && cmd.front() != '"') cmd = "\"" + cmd + "\"";
+            return cmd;
+        }
+        return "";
+    }
+
+    static void AttachDiscordCallbacks(discord::Core* core, HMODULE clientModule)
+    {
+        if (!core) return;
+        const std::string cmd = BuildLaunchCommand(clientModule);
+        if (!cmd.empty()) {
             const discord::Result regRes = core->ActivityManager().RegisterCommand(cmd.c_str());
             Log::Debug("[OpenProStreet] Discord RegisterCommand(%s) -> %d\n", cmd.c_str(), static_cast<int>(regRes));
         }
@@ -209,6 +226,7 @@ namespace
 }
 
 DWORD WINAPI RpcThread(LPVOID param) {
+    HMODULE clientModule = static_cast<HMODULE>(param);
     Log::Debug("[OpenProStreet] RPC thread started.\n");
     uintptr_t baseModule = reinterpret_cast<uintptr_t>(GetModuleHandle(NULL));
     if (!baseModule) {
@@ -238,7 +256,7 @@ DWORD WINAPI RpcThread(LPVOID param) {
                     discord::Result res = discord::Core::Create(DISCORD_APP_ID, DiscordCreateFlags_NoRequireDiscord, &discordCore);
                     if (res == discord::Result::Ok) {
                         Log::Event(Log::Tag::Discord, "Discord core connected successfully.\n");
-                        AttachDiscordCallbacks(discordCore);
+                        AttachDiscordCallbacks(discordCore, clientModule);
                         hasSentOnce = false;
                     }
                 }

@@ -20,11 +20,14 @@
 #include "net/server_link.h"
 #include "log.h"
 #include <cstdio>
+#include <cstring>
 #include <discord.h>
+#include <shellapi.h>
 #include <string>
 #include <windows.h>
 
 discord::Core *discordCore = nullptr;
+static HMODULE g_selfModule = nullptr;
 
 const std::string baseVersion = "10.22";
 #ifdef OPENPROSTREET_VERSION_SUFFIX
@@ -58,16 +61,38 @@ static DWORD WINAPI UnsupportedGameNotice(LPVOID) {
   return 0;
 }
 
+// Exported for rundll32.exe so Discord's "Launch Game" URI launches nfs.exe with WorkingDirectory = <game>.
+extern "C" __declspec(dllexport) void CALLBACK LaunchGame(HWND, HINSTANCE, LPSTR, int) {
+  char asiPath[MAX_PATH] = {};
+  if (!g_selfModule || GetModuleFileNameA(g_selfModule, asiPath, MAX_PATH) == 0) return;
+  std::string dir(asiPath);
+  const size_t fileSlash = dir.find_last_of("\\/");
+  if (fileSlash == std::string::npos) return;
+  dir.resize(fileSlash);
+  const size_t parentSlash = dir.find_last_of("\\/");
+  if (parentSlash != std::string::npos) {
+    const std::string leaf = dir.substr(parentSlash + 1);
+    if (_stricmp(leaf.c_str(), "scripts") == 0) dir.resize(parentSlash);
+  }
+  const std::string exe = dir + "\\nfs.exe";
+  if (reinterpret_cast<INT_PTR>(ShellExecuteA(nullptr, "open", exe.c_str(), nullptr, dir.c_str(), SW_SHOWNORMAL)) <= 32) {
+    STARTUPINFOA si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (CreateProcessA(exe.c_str(), nullptr, nullptr, nullptr, FALSE, 0, nullptr, dir.c_str(), &si, &pi)) {
+      CloseHandle(pi.hThread);
+      CloseHandle(pi.hProcess);
+    }
+  }
+}
+
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
                       LPVOID lpReserved) {
   if (ul_reason_for_call == DLL_PROCESS_ATTACH) {
-    Log::Init(hModule);
-    Log::Debug("[OpenProStreet] ASI attached. "
-           "(https://code.weexnes.dev/OpenProStreet/client)\n");
+    g_selfModule = hModule;
     char procname[MAX_PATH];
     GetModuleFileNameA(NULL, procname, MAX_PATH);
     if (strstr(procname, "nfs.exe") == NULL) {
-      Log::Debug("[OpenProStreet] Not nfs.exe, exiting.\n");
       return TRUE;
     }
 
@@ -78,6 +103,10 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
     if (slash != std::string::npos) {
       SetCurrentDirectoryA(exeStr.substr(0, slash).c_str());
     }
+
+    Log::Init(hModule);
+    Log::Debug("[OpenProStreet] ASI attached. "
+           "(https://code.weexnes.dev/OpenProStreet/client)\n");
 
     Log::Debug("[OpenProStreet] nfs.exe detected.\n");
     Log::Banner("OpenProStreet Client " + version,
@@ -117,7 +146,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
     CameraOrbit::Init(baseModule);
     ReShifted::Init(baseModule);
 
-    HANDLE hThread = CreateThread(NULL, 0, RpcThread, NULL, 0, NULL);
+    HANDLE hThread = CreateThread(NULL, 0, RpcThread, hModule, 0, NULL);
     if (hThread) {
       Log::Debug("[OpenProStreet] RPC thread created successfully.\n");
       CloseHandle(hThread);
