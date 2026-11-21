@@ -28,13 +28,17 @@ else
     echo "Discord Game SDK already exists in thirdparty/."
 fi
 
-# Detect feature branch for version suffix (-fb-<branch>)
+# Detect feature branch for version suffix (-fb-<branch>[-b<build>])
 BRANCH_NAME="${OPENPROSTREET_BRANCH:-$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")}"
 VERSION_SUFFIX=""
 if [ -n "${BRANCH_NAME}" ] && [ "${BRANCH_NAME}" != "HEAD" ] && [ "${BRANCH_NAME}" != "master" ] && [ "${BRANCH_NAME}" != "main" ]; then
     SANITIZED_BRANCH=$(printf '%s' "${BRANCH_NAME}" | tr '/_ ' '---' | tr -cd 'A-Za-z0-9.-')
     if [ -n "${SANITIZED_BRANCH}" ]; then
         VERSION_SUFFIX="-fb-${SANITIZED_BRANCH}"
+        BUILD_NUM=$(printf '%s' "${OPENPROSTREET_BUILD_NUMBER:-}" | tr -cd '0-9')
+        if [ -n "${BUILD_NUM}" ]; then
+            VERSION_SUFFIX="${VERSION_SUFFIX}-b${BUILD_NUM}"
+        fi
     fi
 fi
 
