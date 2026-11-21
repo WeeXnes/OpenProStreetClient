@@ -20,7 +20,7 @@ jobs:
       shell: sh
       commands: |
         echo "Extracting version from src/main.cpp..."
-        grep -oP 'const std::string version = "\K[^"]+' src/main.cpp > version.txt || echo "1.0" > version.txt
+        grep -oP 'const std::string (?:baseVersion|version) = "\K[^"]+' src/main.cpp | head -n 1 > version.txt || echo "1.0" > version.txt
         echo "Version extracted: $(cat version.txt)"
     runAs: 0:0
     useTTY: true
@@ -65,8 +65,8 @@ jobs:
     optional: false
   triggers:
   - type: BranchUpdateTrigger
+    branches: master
     userMatch: anyone
-  - type: PullRequestUpdateTrigger
   retryCondition: never
   maxAttempts: 4
   retryDelay: 30
@@ -115,6 +115,78 @@ jobs:
     optional: false
   triggers:
   - type: TagCreateTrigger
+  retryCondition: never
+  maxAttempts: 4
+  retryDelay: 30
+  includeUpstreamWhenRebuild: false
+  includeDownstreamWhenRebuild: false
+  timeout: 14400
+- name: Build Feature Branch
+  executeInSandbox: false
+  jobExecutor: Builder
+  steps:
+  - type: CheckoutStep
+    name: checkout code
+    cloneCredential:
+      type: DefaultCredential
+    withLfs: false
+    withSubmodules: false
+    condition: SUCCESSFUL
+    optional: false
+  - type: CommandStep
+    name: compute feature version
+    runInContainer: false
+    interpreter:
+      type: PosixInterpreter
+      shell: sh
+      commands: |
+        set -e
+        base=$(grep -oP 'const std::string (?:baseVersion|version) = "\K[^"]+' src/main.cpp | head -n 1 || echo "1.0")
+        branch="@branch@"
+        if [ -z "$branch" ] || [ "$branch" = "HEAD" ]; then
+          branch=$(git name-rev --name-only HEAD 2>/dev/null | sed 's#^remotes/origin/##; s#^tags/##' || echo "feature")
+        fi
+        sanitized=$(printf '%s' "$branch" | tr '/_ ' '---' | tr -cd 'A-Za-z0-9.-')
+        echo "$sanitized" > branch.txt
+        echo "${base}-fb-${sanitized}" > version.txt
+        echo "Feature build version: $(cat version.txt)"
+    runAs: 0:0
+    useTTY: true
+    condition: SUCCESSFUL
+    optional: false
+  - type: SetBuildVersionStep
+    name: set build version
+    buildVersion: '@file:version.txt@'
+    condition: ALWAYS
+    optional: false
+  - type: CommandStep
+    name: Cross-Compile Windows x86 ASI Plugin
+    runInContainer: false
+    interpreter:
+      type: PosixInterpreter
+      shell: sh
+      commands: |
+        set -e
+        chmod +x ./build.sh
+        OPENPROSTREET_BRANCH="$(cat branch.txt)" ./build.sh
+        mkdir -p ./release
+        cp build/OpenProStreetClient.asi ./release/
+        cp build/discord_game_sdk.dll ./release/
+        cp build/OpenProStreetClient_v*.zip ./release/
+    runAs: 0:0
+    useTTY: true
+    condition: ALWAYS
+    optional: false
+  - type: PublishArtifactStep
+    name: Upload Feature Artifacts
+    sourcePath: release
+    artifacts: '**'
+    condition: ALWAYS
+    optional: false
+  triggers:
+  - type: BranchUpdateTrigger
+    branches: '** -master'
+    userMatch: anyone
   retryCondition: never
   maxAttempts: 4
   retryDelay: 30
@@ -175,6 +247,7 @@ jobs:
     optional: false
   triggers:
   - type: BranchUpdateTrigger
+    branches: master
     userMatch: anyone
   - type: TagCreateTrigger
     projects: OpenProStreet/client

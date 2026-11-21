@@ -28,11 +28,22 @@ else
     echo "Discord Game SDK already exists in thirdparty/."
 fi
 
+# Detect feature branch for version suffix (-fb-<branch>)
+BRANCH_NAME="${OPENPROSTREET_BRANCH:-$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")}"
+VERSION_SUFFIX=""
+if [ -n "${BRANCH_NAME}" ] && [ "${BRANCH_NAME}" != "HEAD" ] && [ "${BRANCH_NAME}" != "master" ] && [ "${BRANCH_NAME}" != "main" ]; then
+    SANITIZED_BRANCH=$(printf '%s' "${BRANCH_NAME}" | tr '/_ ' '---' | tr -cd 'A-Za-z0-9.-')
+    if [ -n "${SANITIZED_BRANCH}" ]; then
+        VERSION_SUFFIX="-fb-${SANITIZED_BRANCH}"
+    fi
+fi
+
 # 2. Configure and build
-echo "Configuring build using CMake..."
+echo "Configuring build using CMake (suffix='${VERSION_SUFFIX}')..."
 cmake -B build \
   -DCMAKE_TOOLCHAIN_FILE="${SCRIPT_DIR}/mingw-w64-i686.cmake" \
-  -DCMAKE_BUILD_TYPE=Release
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCLIENT_VERSION_SUFFIX="${VERSION_SUFFIX}"
 
 echo "Building project..."
 cmake --build build --config Release
@@ -45,15 +56,17 @@ if [ -f "${SDK_DIR}/lib/x86/discord_game_sdk.dll" ]; then
 fi
 
 echo "Creating ZIP bundle..."
-python3 -c "
-import zipfile, os
+OPENPROSTREET_VERSION_SUFFIX="${VERSION_SUFFIX}" python3 -c "
+import zipfile, os, re
 lib_file = os.path.join('${SCRIPT_DIR}', 'src', 'main.cpp')
+version = '1.0'
 if os.path.exists(lib_file):
     with open(lib_file) as f:
-        for line in f:
-            if 'const std::string version =' in line:
-                version = line.split('\"')[1]
-                break
+        text = f.read()
+        m = re.search(r'const std::string (?:baseVersion|version) = \"([^\"]+)\"', text)
+        if m:
+            version = m.group(1)
+version += os.environ.get('OPENPROSTREET_VERSION_SUFFIX', '')
 zip_name = f'build/OpenProStreetClient_v{version}.zip'
 with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
     zipf.write('build/OpenProStreetClient.asi', 'OpenProStreetClient.asi')

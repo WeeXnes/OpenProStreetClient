@@ -9,15 +9,20 @@ add_definitions(-DIMGUI_DISABLE_WIN32_FUNCTIONS -DIMGUI_DISABLE_DEMO_WINDOWS -DI
 
 # The client's version lives in src/main.cpp, where the release job reads it too. The file details
 # Windows and the launcher read are made from it, so they can't fall behind.
-file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp" CLIENT_VERSION_LINE REGEX "const std::string version = \"")
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp" CLIENT_VERSION_LINE REGEX "const std::string (baseVersion|version) = \"")
 if(NOT CLIENT_VERSION_LINE MATCHES "\"([0-9]+)\\.([0-9]+)")
     message(FATAL_ERROR "Couldn't read the client version from src/main.cpp")
 endif()
 set(CLIENT_VERSION_MAJOR ${CMAKE_MATCH_1})
 set(CLIENT_VERSION_MINOR ${CMAKE_MATCH_2})
+set(CLIENT_VERSION_SUFFIX "" CACHE STRING "")
+set(CLIENT_VERSION_DISPLAY "${CLIENT_VERSION_MAJOR}.${CLIENT_VERSION_MINOR}${CLIENT_VERSION_SUFFIX}")
+if(CLIENT_VERSION_SUFFIX)
+    add_compile_definitions(OPENPROSTREET_VERSION_SUFFIX="${CLIENT_VERSION_SUFFIX}")
+endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/main.cpp)
 configure_file(src/version.rc.in "${CMAKE_CURRENT_BINARY_DIR}/version.rc" @ONLY)
-message(STATUS "Client version ${CLIENT_VERSION_MAJOR}.${CLIENT_VERSION_MINOR}")
+message(STATUS "Client version ${CLIENT_VERSION_DISPLAY}")
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
