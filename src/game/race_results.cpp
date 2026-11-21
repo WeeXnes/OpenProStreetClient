@@ -68,6 +68,7 @@ namespace RaceResults
     static const uintptr_t RACER_LAPS_COMPLETED = 0x74;
     static const uintptr_t RACER_TOP_SPEED_MS = 0x78;
     static const uintptr_t RACER_BEST_LAP = 0x80;
+    static const uintptr_t RACER_WHEELIE_M = 0xCC;
     static const uintptr_t RACER_LAST_LAP = 0x2D4;
     static const uintptr_t RACER_RACE_TIMER_START = 0x3E8;
     static const uintptr_t RACER_RACE_TIMER_ELAPSED = 0x3EC;
@@ -670,6 +671,77 @@ namespace RaceResults
             LeaveCriticalSection(&g_paceLock);
         }
         return out;
+    }
+
+    std::vector<LiveRacer> GetLiveRacers()
+    {
+        std::vector<LiveRacer> racersOut;
+        if (!g_baseModule) return racersOut;
+        uintptr_t flowAddr = g_baseModule + FLOW_STATE_OFFSET;
+        if (IsBadReadPtr((void*)flowAddr, sizeof(int32_t)) != 0 || *(int32_t*)flowAddr != 6) {
+            return racersOut;
+        }
+        uintptr_t gRaceStatusBase = g_baseModule + 0x6B9D7C;
+        if (IsBadReadPtr((void*)gRaceStatusBase, sizeof(uintptr_t)) != 0) return racersOut;
+        uintptr_t gRaceStatus = *(uintptr_t*)gRaceStatusBase;
+        if (gRaceStatus == 0 || IsBadReadPtr((void*)gRaceStatus, RACE_STATUS_RACER_COUNT + sizeof(int32_t)) != 0) {
+            return racersOut;
+        }
+        const int count = *(int32_t*)(gRaceStatus + RACE_STATUS_RACER_COUNT);
+        if (count <= 0 || count > MAX_RACERS) return racersOut;
+
+        const uintptr_t localRacer = FindLocalRacer(g_baseModule, gRaceStatus);
+        uintptr_t worldTimeAddr = g_baseModule + WORLD_TIME_OFFSET;
+        float worldTime = !IsBadReadPtr((void*)worldTimeAddr, sizeof(float)) ? *(float*)worldTimeAddr : 0.0f;
+        if (!std::isfinite(worldTime)) worldTime = 0.0f;
+
+        const uintptr_t racersBase = gRaceStatus + RACE_STATUS_RACERS;
+        for (int i = 0; i < count; ++i) {
+            const uintptr_t racer = racersBase + (i * RACER_SIZE);
+            if (IsBadReadPtr((void*)racer, RACER_LAP_TIMER_RUNNING + 1) != 0) continue;
+
+            char rawName[32] = {};
+            memcpy(rawName, (const void*)(racer + RACER_NAME), sizeof(rawName) - 1);
+            rawName[sizeof(rawName) - 1] = '\0';
+            if (rawName[0] == '\0') continue;
+
+            LiveRacer entry;
+            entry.name = rawName;
+            entry.isLocal = (racer == localRacer);
+            entry.isAI = *(uintptr_t*)(racer + RACER_AI_OPPONENT) != 0;
+            const int rank = *(int32_t*)(racer + RACER_RANK);
+            entry.rank = (rank >= 1 && rank <= MAX_RACERS) ? rank : 0;
+            entry.lapsCompleted = *(int32_t*)(racer + RACER_LAPS_COMPLETED);
+
+            const float score = *(float*)(racer + RACER_SCORE);
+            entry.score = (std::isfinite(score) && score >= 0.0f) ? score : 0.0f;
+            const float speedMs = *(float*)(racer + RACER_TOP_SPEED_MS);
+            entry.topSpeedKmh = (std::isfinite(speedMs) && speedMs > 0.0f && speedMs < 500.0f) ? speedMs * 3.6f : 0.0f;
+            const float bestLap = *(float*)(racer + RACER_BEST_LAP);
+            entry.bestLap = (std::isfinite(bestLap) && bestLap > 0.0f && bestLap < 86400.0f) ? bestLap : 0.0f;
+            const float lastLap = *(float*)(racer + RACER_LAST_LAP);
+            entry.lastLap = (std::isfinite(lastLap) && lastLap > 0.0f && lastLap < 86400.0f) ? lastLap : 0.0f;
+            const float wheelie = *(float*)(racer + RACER_WHEELIE_M);
+            entry.wheelieM = (std::isfinite(wheelie) && wheelie > 0.0f && wheelie < 100000.0f) ? wheelie : 0.0f;
+
+            bool running = false;
+            const float timer = ReadTimer(racer, RACER_RACE_TIMER_START, RACER_RACE_TIMER_ELAPSED, RACER_RACE_TIMER_RUNNING, worldTime, &running);
+            float snapshot = *(float*)(racer + RACER_RACE_TIME_SNAPSHOT);
+            if (!std::isfinite(snapshot) || snapshot <= 0.0f || snapshot >= 86400.0f) snapshot = 0.0f;
+            entry.finished = !running && snapshot > 0.0f;
+            entry.raceElapsed = entry.finished ? snapshot : (timer > 0.0f ? timer : snapshot);
+            racersOut.push_back(std::move(entry));
+        }
+
+        std::sort(racersOut.begin(), racersOut.end(), [](const LiveRacer& a, const LiveRacer& b) {
+            const int ra = a.rank > 0 ? a.rank : 99;
+            const int rb = b.rank > 0 ? b.rank : 99;
+            if (ra != rb) return ra < rb;
+            if (a.finished != b.finished) return a.finished;
+            if (a.isLocal != b.isLocal) return a.isLocal;
+            return a.name < b.name;
+        });
+        return racersOut;
     }
 
     static float __attribute__((thiscall)) OnlineHubTimer_GetRemainingSeconds_Hook(void* thisPtr)

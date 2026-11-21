@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 // Hides the cars a race day doesn't allow from the LAN car selection screen. The server sends the
 // room's allowed cars when the player joins, and also refuses any other car, so an old or modified
@@ -14,6 +15,9 @@ namespace CarLock
 
     // Model names from the server, separated by commas. Empty allows every car.
     void SetAllowedCars(const std::string& models);
+
+    // Display names of allowed cars, or empty when every car is allowed.
+    std::vector<std::string> GetAllowedCarNames();
 }
 
 #endif // OPENPROSTREET_CAR_LOCK_H

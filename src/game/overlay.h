@@ -66,6 +66,7 @@ namespace Overlay
         std::string name;
         std::string car;
         std::string status; // ready, menus, picking, blocked, racing
+        int         pingMs = -1;
     };
 
     struct LobbyTimerState

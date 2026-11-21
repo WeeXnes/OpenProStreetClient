@@ -15,6 +15,8 @@
 #include "imgui.h"
 #include "backends/imgui_impl_dx9.h"
 
+#include "game/car.h"
+#include "game/car_lock.h"
 #include "game/d3d_hooks.h"
 #include "game/event_vote.h"
 #include "game/vault_fixes.h"
@@ -28,8 +30,14 @@ namespace Overlay
     enum Corner { TopLeft, TopRight, BottomLeft, BottomRight };
     static bool g_enabled = true;
     static bool g_notices = true;
+    static bool g_hudVisible = true;
+    static int  g_toggleKey = VK_F3;
+    static int  g_scoreboardKey = VK_TAB;
+    static std::string g_toggleKeyName = "F3";
+    static std::string g_scoreboardKeyName = "TAB";
     static Corner g_corner = TopRight;
     static float g_userScale = 1.0f;
+    static uintptr_t g_baseModule = 0;
     static std::string g_version;
     static bool g_drawnOnce = false;
     static bool g_test = false;                  // [Overlay] Test=1: always show a small panel
@@ -496,8 +504,65 @@ namespace Overlay
         }
     }
 
+    static ImVec4 PingColour(int pingMs)
+    {
+        return pingMs < 60 ? Success : pingMs < 120 ? Warning : Danger;
+    }
+
+    static void DrawPingRight(int pingMs, float s)
+    {
+        if (pingMs < 0) return;
+        char text[24];
+        snprintf(text, sizeof(text), "%d ms", pingMs);
+        ImGui::PushFont(g_fontMono);
+        const float textW = ImGui::CalcTextSize(text).x;
+        const float dotGap = 9.0f * s;
+        const float totalW = dotGap + textW;
+        ImGui::SameLine(0.0f, 0.0f);
+        const float targetX = (std::max)(ImGui::GetCursorPosX() + 14.0f * s,
+                                         (ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x) - totalW);
+        ImGui::SetCursorPosX(targetX);
+        const ImVec2 dotAt = ImGui::GetCursorScreenPos();
+        const float lineH = ImGui::GetTextLineHeight();
+        const ImVec4 col = PingColour(pingMs);
+        ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(dotAt.x + 3.0f * s, dotAt.y + lineH * 0.5f), 2.5f * s, ImGui::GetColorU32(col));
+        ImGui::SetCursorPosX(targetX + dotGap);
+        ImGui::TextColored(col, "%s", text);
+        ImGui::PopFont();
+    }
+
+    static void DrawAllowedCars(bool blockedWarning, float s, size_t maxShown)
+    {
+        const std::vector<std::string> allowed = CarLock::GetAllowedCarNames();
+        ImGui::PushFont(g_fontSmall);
+        if (allowed.empty())
+        {
+            ImGui::TextColored(Text3, "Cars: Any");
+        }
+        else
+        {
+            std::string list;
+            const size_t limit = maxShown > 0 ? (std::min)(maxShown, allowed.size()) : allowed.size();
+            for (size_t i = 0; i < limit; ++i)
+            {
+                if (!list.empty()) list += ", ";
+                list += allowed[i];
+            }
+            if (allowed.size() > limit)
+                list += ", +" + std::to_string(allowed.size() - limit) + " more";
+
+            const float wrapAt = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x;
+            ImGui::PushTextWrapPos(wrapAt);
+            ImGui::TextColored(blockedWarning ? Warning : Info, "Allowed (%u):", static_cast<unsigned>(allowed.size()));
+            ImGui::SameLine(0.0f, 6.0f * s);
+            ImGui::TextColored(blockedWarning ? Warning : Text2, "%s", list.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::PopFont();
+    }
+
     static void DrawStanding(const std::string& trackName, const std::string& mode, const std::vector<Board>& boards,
-                             bool paceBarShown, const RaceResults::LivePace& pace, float s)
+                             bool paceBarShown, const RaceResults::LivePace& pace, int pingMs, float s)
     {
         const ImVec2 display = ImGui::GetIO().DisplaySize;
         const float margin = 24.0f * s;
@@ -505,12 +570,13 @@ namespace Overlay
         const bool bottom = g_corner == BottomLeft || g_corner == BottomRight;
         ImGui::SetNextWindowPos(ImVec2(right ? display.x - margin : margin, bottom ? display.y - margin : margin), ImGuiCond_Always,
                                 ImVec2(right ? 1.0f : 0.0f, bottom ? 1.0f : 0.0f));
-        ImGui::SetNextWindowSizeConstraints(ImVec2(300.0f * s, 0.0f), ImVec2(420.0f * s, display.y));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(310.0f * s, 0.0f), ImVec2(430.0f * s, display.y));
         if (!ImGui::Begin("##standing", nullptr, PanelFlags)) { ImGui::End(); return; }
 
         ImGui::PushFont(g_fontBody);
         ImGui::TextColored(Text1, "%s", trackName.c_str());
         ImGui::PopFont();
+        DrawPingRight(pingMs, s);
         ImGui::PushFont(g_fontSmall);
         // One leaderboard for both; this only says what the player's own cars have.
         const std::string speed = std::string(VaultFixes::SpeedLimit()) == "limited" ? "your cars: speed limiter on" : "your cars: no speed limiter";
@@ -585,7 +651,7 @@ namespace Overlay
     // Who is in the room, race day context, live timer state, and each player's status.
     static void DrawLobby(const std::string& room, const std::string& atmosphere, int eventIndex, int eventCount,
                           const std::vector<LobbyPlayer>& players, const LobbyTimerState& timer,
-                          const EventVote::View& vote, float s)
+                          const EventVote::View& vote, int pingMs, float s)
     {
         const ImVec2 display = ImGui::GetIO().DisplaySize;
         const float margin = 24.0f * s;
@@ -593,7 +659,7 @@ namespace Overlay
         const bool bottom = g_corner == BottomLeft || g_corner == BottomRight;
         ImGui::SetNextWindowPos(ImVec2(right ? display.x - margin : margin, bottom ? display.y - margin : margin), ImGuiCond_Always,
                                 ImVec2(right ? 1.0f : 0.0f, bottom ? 1.0f : 0.0f));
-        ImGui::SetNextWindowSizeConstraints(ImVec2(330.0f * s, 0.0f), ImVec2(480.0f * s, display.y));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(360.0f * s, 0.0f), ImVec2(510.0f * s, display.y));
         if (!ImGui::Begin("##lobby", nullptr, PanelFlags)) { ImGui::End(); return; }
 
         bool anyBlocked = false;
@@ -601,6 +667,7 @@ namespace Overlay
         const ImVec4 dot = timer.paused || anyBlocked ? Warning
                          : (timer.ready > 0 && timer.ready == timer.total) ? Success : Info;
         DrawCardTitle(room.empty() ? "In this room" : room.c_str(), dot, s);
+        DrawPingRight(pingMs, s);
 
         const int totalEvents = eventCount > 0 ? eventCount : static_cast<int>(vote.events.size());
         const int activeEvent = eventCount > 0 ? eventIndex : vote.current;
@@ -618,6 +685,7 @@ namespace Overlay
             }
             ImGui::PopFont();
         }
+        DrawAllowedCars(anyBlocked, s, 6);
 
         ImGui::Dummy(ImVec2(0.0f, 3.0f * s));
         ImGui::PushFont(g_fontSmall);
@@ -673,11 +741,12 @@ namespace Overlay
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0.0f, 4.0f * s));
 
-        if (ImGui::BeginTable("##lobbycars", 3, ImGuiTableFlags_SizingFixedFit))
+        if (ImGui::BeginTable("##lobbycars", 4, ImGuiTableFlags_SizingFixedFit))
         {
-            ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthFixed, 118.0f * s);
+            ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthFixed, 110.0f * s);
             ImGui::TableSetupColumn("car", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("state", ImGuiTableColumnFlags_WidthFixed, 76.0f * s);
+            ImGui::TableSetupColumn("state", ImGuiTableColumnFlags_WidthFixed, 68.0f * s);
+            ImGui::TableSetupColumn("ping", ImGuiTableColumnFlags_WidthFixed, 54.0f * s);
             ImGui::PushFont(g_fontSmall);
             for (const auto& entry : players)
             {
@@ -689,6 +758,18 @@ namespace Overlay
                 else ImGui::TextColored(Text2, "%s", entry.car.c_str());
                 ImGui::TableSetColumnIndex(2);
                 ImGui::TextColored(StatusColour(entry.status), "%s", StatusLabel(entry.status));
+                ImGui::TableSetColumnIndex(3);
+                const int pMs = entry.pingMs >= 0 ? entry.pingMs : ServerLink::GetPlayerPingMs(entry.name);
+                if (pMs >= 0)
+                {
+                    ImGui::PushFont(g_fontMono);
+                    ImGui::TextColored(PingColour(pMs), "%d ms", pMs);
+                    ImGui::PopFont();
+                }
+                else
+                {
+                    ImGui::TextColored(Text3, "-");
+                }
             }
             ImGui::PopFont();
             ImGui::EndTable();
@@ -1162,6 +1243,447 @@ namespace Overlay
         return process == GetCurrentProcessId();
     }
 
+    static int ParseOverlayKey(const char* text, int fallback, std::string* outName)
+    {
+        if (!text || !text[0]) return fallback;
+        if (_stricmp(text, "Tab") == 0) { if (outName) *outName = "TAB"; return VK_TAB; }
+        if (_stricmp(text, "Insert") == 0) { if (outName) *outName = "INS"; return VK_INSERT; }
+        if (_stricmp(text, "Home") == 0) { if (outName) *outName = "HOME"; return VK_HOME; }
+        if (_stricmp(text, "End") == 0) { if (outName) *outName = "END"; return VK_END; }
+        if (_stricmp(text, "Delete") == 0) { if (outName) *outName = "DEL"; return VK_DELETE; }
+        if (_stricmp(text, "PageUp") == 0) { if (outName) *outName = "PGUP"; return VK_PRIOR; }
+        if (_stricmp(text, "PageDown") == 0) { if (outName) *outName = "PGDN"; return VK_NEXT; }
+        if (_stricmp(text, "Space") == 0) { if (outName) *outName = "SPACE"; return VK_SPACE; }
+        if ((text[0] == 'F' || text[0] == 'f') && text[1])
+        {
+            const int number = atoi(text + 1);
+            if (number >= 1 && number <= 12)
+            {
+                if (outName) *outName = "F" + std::to_string(number);
+                return VK_F1 + number - 1;
+            }
+        }
+        if (text[1] == '\0')
+        {
+            const char ch = text[0];
+            if (ch >= 'a' && ch <= 'z')
+            {
+                const char upper = static_cast<char>(ch - ('a' - 'A'));
+                if (outName) *outName = std::string(1, upper);
+                return static_cast<int>(upper);
+            }
+            if ((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9'))
+            {
+                if (outName) *outName = std::string(1, ch);
+                return static_cast<int>(ch);
+            }
+        }
+        return fallback;
+    }
+
+    static bool ToggleKeyPressed(int key, bool front)
+    {
+        static bool wasDown = false;
+        const bool down = front && key > 0 && (GetAsyncKeyState(key) & 0x8000) != 0;
+        const bool pressed = down && !wasDown;
+        wasDown = down;
+        return pressed;
+    }
+
+    static const LobbyPlayer* FindLobbyPlayer(const std::vector<LobbyPlayer>& players, const std::string& name)
+    {
+        for (const LobbyPlayer& p : players)
+        {
+            if (_stricmp(p.name.c_str(), name.c_str()) == 0) return &p;
+        }
+        return nullptr;
+    }
+
+    static void DrawPingCell(int pMs)
+    {
+        if (pMs >= 0)
+        {
+            ImGui::PushFont(g_fontMono);
+            ImGui::TextColored(PingColour(pMs), "%d ms", pMs);
+            ImGui::PopFont();
+        }
+        else
+        {
+            ImGui::TextColored(Text3, "-");
+        }
+    }
+
+    // Rainbow Six Siege-style centered scoreboard shown while holding Tab (or ScoreboardKey).
+    static void DrawScoreboard(const std::string& trackName, const std::string& mode, const std::vector<Board>& boards,
+                               const std::string& room, const std::string& atmosphere, int eventIndex, int eventCount,
+                               const std::vector<LobbyPlayer>& lobbyPlayers, const LobbyTimerState& timer,
+                               const EventVote::View& vote, const std::vector<RaceResults::LiveRacer>& racers,
+                               int pingMs, float s)
+    {
+        const ImVec2 display = ImGui::GetIO().DisplaySize;
+        const float maxW = (std::max)(360.0f * s, display.x - 48.0f * s);
+        const float minW = (std::min)(maxW, 680.0f * s);
+        const float capW = (std::min)(maxW, 920.0f * s);
+        ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(minW, 0.0f), ImVec2(capW, display.y - 48.0f * s));
+        ImGui::SetNextWindowBgAlpha(0.95f);
+        ImGui::PushStyleColor(ImGuiCol_Border, Line);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f * s, 16.0f * s));
+        if (!ImGui::Begin("##scoreboard", nullptr, PanelFlags))
+        {
+            ImGui::End();
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor();
+            return;
+        }
+
+        const bool inRace = !racers.empty();
+        const ImVec4 titleDot = inRace ? Success : Info;
+        std::string title = inRace ? trackName : (room.empty() ? "Lobby Scoreboard" : room);
+        if (title.empty()) title = "OpenProStreet";
+        DrawCardTitle(title.c_str(), titleDot, s);
+        DrawPingRight(pingMs, s);
+
+        const int totalEvents = eventCount > 0 ? eventCount : static_cast<int>(vote.events.size());
+        const int activeEvent = eventCount > 0 ? eventIndex : vote.current;
+        const std::string atm = FormatAtmosphere(atmosphere);
+
+        ImGui::PushFont(g_fontSmall);
+        std::string subtitle;
+        if (inRace)
+        {
+            if (!mode.empty()) subtitle = mode;
+            if (!room.empty()) subtitle += (subtitle.empty() ? "" : " \xC2\xB7 ") + room;
+            if (totalEvents > 0 && activeEvent >= 0)
+                subtitle += (subtitle.empty() ? "" : " \xC2\xB7 ") + std::string("Event ") + std::to_string(activeEvent + 1) + "/" + std::to_string(totalEvents);
+            if (!atm.empty()) subtitle += (subtitle.empty() ? "" : " \xC2\xB7 ") + atm;
+            const std::string speed = std::string(VaultFixes::SpeedLimit()) == "limited" ? "speed limiter on" : "no speed limiter";
+            subtitle += (subtitle.empty() ? "" : " \xC2\xB7 ") + speed;
+        }
+        else
+        {
+            if (totalEvents > 0 && activeEvent >= 0)
+                subtitle = "Event " + std::to_string(activeEvent + 1) + "/" + std::to_string(totalEvents);
+            if (activeEvent >= 0 && static_cast<size_t>(activeEvent) < vote.events.size())
+                subtitle += (subtitle.empty() ? "" : " \xC2\xB7 ") + vote.events[static_cast<size_t>(activeEvent)];
+            if (!atm.empty()) subtitle += (subtitle.empty() ? "" : " \xC2\xB7 ") + atm;
+            if (timer.seconds >= 0)
+                subtitle += (subtitle.empty() ? "" : " \xC2\xB7 ") + std::string(timer.paused ? "Paused " : "Starting in ") + FormatClock(timer.seconds);
+        }
+        if (!subtitle.empty()) ImGui::TextColored(Text2, "%s", subtitle.c_str());
+        ImGui::PopFont();
+
+        ImGui::Dummy(ImVec2(0.0f, 8.0f * s));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0.0f, 8.0f * s));
+
+        if (inRace)
+        {
+            const bool isDrift = mode.find("Drift") != std::string::npos;
+            const bool isWheelie = mode.find("Wheelie") != std::string::npos;
+            const bool isDrag = mode.find("Drag") != std::string::npos;
+            const bool isSpeed = mode.find("Speed") != std::string::npos;
+            const int cols = isDrift ? 7 : isWheelie ? 7 : isSpeed ? 7 : isDrag ? 8 : 8;
+
+            const std::string localCar = g_baseModule ? TranslateCarIdentifier(ReadRawCarIdentifier(g_baseModule)) : std::string();
+
+            if (ImGui::BeginTable("##scoreboard_race", cols, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_PadOuterX))
+            {
+                ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 32.0f * s);
+                ImGui::TableSetupColumn("Driver", ImGuiTableColumnFlags_WidthFixed, 155.0f * s);
+                ImGui::TableSetupColumn("Car", ImGuiTableColumnFlags_WidthStretch);
+                if (isDrift)
+                {
+                    ImGui::TableSetupColumn("Score", ImGuiTableColumnFlags_WidthFixed, 108.0f * s);
+                    ImGui::TableSetupColumn("Top Speed", ImGuiTableColumnFlags_WidthFixed, 96.0f * s);
+                    ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 78.0f * s);
+                }
+                else if (isWheelie)
+                {
+                    ImGui::TableSetupColumn("Wheelie", ImGuiTableColumnFlags_WidthFixed, 96.0f * s);
+                    ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 96.0f * s);
+                    ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 78.0f * s);
+                }
+                else if (isSpeed)
+                {
+                    ImGui::TableSetupColumn("Top Speed", ImGuiTableColumnFlags_WidthFixed, 108.0f * s);
+                    ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 96.0f * s);
+                    ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 78.0f * s);
+                }
+                else if (isDrag)
+                {
+                    ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 96.0f * s);
+                    ImGui::TableSetupColumn("Best Run", ImGuiTableColumnFlags_WidthFixed, 96.0f * s);
+                    ImGui::TableSetupColumn("Top Speed", ImGuiTableColumnFlags_WidthFixed, 92.0f * s);
+                    ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 74.0f * s);
+                }
+                else
+                {
+                    ImGui::TableSetupColumn("Laps", ImGuiTableColumnFlags_WidthFixed, 48.0f * s);
+                    ImGui::TableSetupColumn("Best Lap", ImGuiTableColumnFlags_WidthFixed, 96.0f * s);
+                    ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 96.0f * s);
+                    ImGui::TableSetupColumn("Top Speed", ImGuiTableColumnFlags_WidthFixed, 92.0f * s);
+                }
+                ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, 62.0f * s);
+
+                ImGui::PushFont(g_fontMicro);
+                ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+                for (int c = 0; c < cols; ++c)
+                {
+                    ImGui::TableSetColumnIndex(c);
+                    ImGui::TextColored(Text3, "%s", ImGui::TableGetColumnName(c));
+                }
+                ImGui::PopFont();
+
+                const ImU32 selfBg = ImGui::GetColorU32(ImVec4(Info.x, Info.y, Info.z, 0.14f));
+                const ImU32 altBg = ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 0.025f));
+                for (size_t i = 0; i < racers.size(); ++i)
+                {
+                    const RaceResults::LiveRacer& r = racers[i];
+                    ImGui::TableNextRow();
+                    if (r.isLocal) ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, selfBg);
+                    else if (i % 2 == 1) ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, altBg);
+
+                    ImGui::PushFont(g_fontSmall);
+                    ImGui::TableSetColumnIndex(0);
+                    if (r.rank > 0)
+                    {
+                        ImGui::PushFont(g_fontMono);
+                        ImGui::TextColored(PlaceColour(r.rank), "%d", r.rank);
+                        ImGui::PopFont();
+                    }
+                    else
+                    {
+                        ImGui::TextColored(Text3, "-");
+                    }
+
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TextColored(r.isLocal ? Text1 : r.isAI ? Text3 : Text2, "%s", r.name.c_str());
+                    if (r.isLocal)
+                    {
+                        ImGui::SameLine(0.0f, 6.0f * s);
+                        ImGui::PushFont(g_fontMicro);
+                        ImGui::TextColored(Info, "YOU");
+                        ImGui::PopFont();
+                    }
+                    else if (r.isAI)
+                    {
+                        ImGui::SameLine(0.0f, 6.0f * s);
+                        ImGui::PushFont(g_fontMicro);
+                        ImGui::TextColored(Text3, "AI");
+                        ImGui::PopFont();
+                    }
+
+                    const LobbyPlayer* lp = r.isAI ? nullptr : FindLobbyPlayer(lobbyPlayers, r.name);
+                    std::string carName = lp ? lp->car : std::string();
+                    if (carName.empty() && r.isLocal) carName = localCar;
+
+                    ImGui::TableSetColumnIndex(2);
+                    ImGui::TextColored(carName.empty() ? Text3 : Text2, "%s", carName.empty() ? "-" : carName.c_str());
+
+                    int colIdx = 3;
+                    if (isDrift)
+                    {
+                        ImGui::TableSetColumnIndex(colIdx++);
+                        ImGui::PushFont(g_fontMono);
+                        ImGui::TextColored(r.score > 0.0f ? Text1 : Text3, "%s", r.score > 0.0f ? FormatValue("score", r.score).c_str() : "-");
+                        ImGui::PopFont();
+
+                        ImGui::TableSetColumnIndex(colIdx++);
+                        ImGui::PushFont(g_fontMono);
+                        ImGui::TextColored(r.topSpeedKmh > 0.0f ? Text2 : Text3, "%s", r.topSpeedKmh > 0.0f ? FormatValue("top_speed", r.topSpeedKmh).c_str() : "-");
+                        ImGui::PopFont();
+
+                        ImGui::TableSetColumnIndex(colIdx++);
+                        ImGui::TextColored(r.finished ? Success : Info, "%s", r.finished ? "Finished" : "Racing");
+                    }
+                    else if (isWheelie)
+                    {
+                        ImGui::TableSetColumnIndex(colIdx++);
+                        ImGui::PushFont(g_fontMono);
+                        ImGui::TextColored(r.wheelieM > 0.0f ? Text1 : Text3, "%s", r.wheelieM > 0.0f ? FormatValue("wheelie", r.wheelieM).c_str() : "-");
+                        ImGui::PopFont();
+
+                        ImGui::TableSetColumnIndex(colIdx++);
+                        ImGui::PushFont(g_fontMono);
+                        ImGui::TextColored(r.raceElapsed > 0.0f ? Text2 : Text3, "%s", r.raceElapsed > 0.0f ? FormatValue("race_time", r.raceElapsed).c_str() : "-");
+                        ImGui::PopFont();
+
+                        ImGui::TableSetColumnIndex(colIdx++);
+                        ImGui::TextColored(r.finished ? Success : Info, "%s", r.finished ? "Finished" : "Racing");
+                    }
+                    else if (isSpeed)
+                    {
+                        ImGui::TableSetColumnIndex(colIdx++);
+                        ImGui::PushFont(g_fontMono);
+                        ImGui::TextColored(r.topSpeedKmh > 0.0f ? Text1 : Text3, "%s", r.topSpeedKmh > 0.0f ? FormatValue("top_speed", r.topSpeedKmh).c_str() : "-");
+                        ImGui::PopFont();
+
+                        ImGui::TableSetColumnIndex(colIdx++);
+                        ImGui::PushFont(g_fontMono);
+                        ImGui::TextColored(r.raceElapsed > 0.0f ? Text2 : Text3, "%s", r.raceElapsed > 0.0f ? FormatValue("race_time", r.raceElapsed).c_str() : "-");
+                        ImGui::PopFont();
+
+                        ImGui::TableSetColumnIndex(colIdx++);
+                        ImGui::TextColored(r.finished ? Success : Info, "%s", r.finished ? "Finished" : "Racing");
+                    }
+                    else if (isDrag)
+                    {
+                        ImGui::TableSetColumnIndex(colIdx++);
+                        ImGui::PushFont(g_fontMono);
+                        ImGui::TextColored(r.raceElapsed > 0.0f ? Text1 : Text3, "%s", r.raceElapsed > 0.0f ? FormatValue("race_time", r.raceElapsed).c_str() : "-");
+                        ImGui::PopFont();
+
+                        ImGui::TableSetColumnIndex(colIdx++);
+                        ImGui::PushFont(g_fontMono);
+                        ImGui::TextColored(r.bestLap > 0.0f ? Text2 : Text3, "%s", r.bestLap > 0.0f ? FormatValue("best_lap", r.bestLap).c_str() : "-");
+                        ImGui::PopFont();
+
+                        ImGui::TableSetColumnIndex(colIdx++);
+                        ImGui::PushFont(g_fontMono);
+                        ImGui::TextColored(r.topSpeedKmh > 0.0f ? Text2 : Text3, "%s", r.topSpeedKmh > 0.0f ? FormatValue("top_speed", r.topSpeedKmh).c_str() : "-");
+                        ImGui::PopFont();
+
+                        ImGui::TableSetColumnIndex(colIdx++);
+                        ImGui::TextColored(r.finished ? Success : Info, "%s", r.finished ? "Finished" : "Racing");
+                    }
+                    else
+                    {
+                        ImGui::TableSetColumnIndex(colIdx++);
+                        ImGui::PushFont(g_fontMono);
+                        ImGui::TextColored(Text2, "%d", r.lapsCompleted);
+                        ImGui::PopFont();
+
+                        ImGui::TableSetColumnIndex(colIdx++);
+                        ImGui::PushFont(g_fontMono);
+                        ImGui::TextColored(r.bestLap > 0.0f ? Text2 : Text3, "%s", r.bestLap > 0.0f ? FormatValue("best_lap", r.bestLap).c_str() : "-");
+                        ImGui::PopFont();
+
+                        ImGui::TableSetColumnIndex(colIdx++);
+                        ImGui::PushFont(g_fontMono);
+                        ImGui::TextColored(r.finished ? Success : r.raceElapsed > 0.0f ? Text1 : Text3, "%s",
+                                           r.raceElapsed > 0.0f ? FormatValue("race_time", r.raceElapsed).c_str() : "-");
+                        ImGui::PopFont();
+
+                        ImGui::TableSetColumnIndex(colIdx++);
+                        ImGui::PushFont(g_fontMono);
+                        ImGui::TextColored(r.topSpeedKmh > 0.0f ? Text2 : Text3, "%s", r.topSpeedKmh > 0.0f ? FormatValue("top_speed", r.topSpeedKmh).c_str() : "-");
+                        ImGui::PopFont();
+                    }
+
+                    ImGui::TableSetColumnIndex(colIdx);
+                    if (r.isAI)
+                    {
+                        ImGui::TextColored(Text3, "-");
+                    }
+                    else
+                    {
+                        int pMs = lp ? lp->pingMs : -1;
+                        if (pMs < 0) pMs = ServerLink::GetPlayerPingMs(r.name);
+                        if (pMs < 0 && r.isLocal) pMs = pingMs;
+                        DrawPingCell(pMs);
+                    }
+                    ImGui::PopFont();
+                }
+                ImGui::EndTable();
+            }
+
+            bool dummyUnused = false;
+            const Board* paceBoard = PickPaceBoard(boards, &dummyUnused);
+            if (paceBoard && (paceBoard->record > 0.0 || paceBoard->best > 0.0))
+            {
+                ImGui::Dummy(ImVec2(0.0f, 6.0f * s));
+                ImGui::Separator();
+                ImGui::Dummy(ImVec2(0.0f, 6.0f * s));
+                ImGui::PushFont(g_fontSmall);
+                if (paceBoard->record > 0.0)
+                {
+                    ImGui::TextColored(Text3, "%s Record:", BoardLabel(*paceBoard).c_str());
+                    ImGui::SameLine(0.0f, 6.0f * s);
+                    ImGui::PushFont(g_fontMono);
+                    ImGui::TextColored(Gold, "%s", FormatValue(paceBoard->metric, paceBoard->record).c_str());
+                    ImGui::PopFont();
+                    if (!paceBoard->recordHolder.empty())
+                    {
+                        ImGui::SameLine(0.0f, 6.0f * s);
+                        ImGui::TextColored(Text2, "(%s)", paceBoard->recordHolder.c_str());
+                    }
+                }
+                if (paceBoard->best > 0.0)
+                {
+                    if (paceBoard->record > 0.0) ImGui::SameLine(0.0f, 18.0f * s);
+                    ImGui::TextColored(Text3, "Your PB:");
+                    ImGui::SameLine(0.0f, 6.0f * s);
+                    ImGui::PushFont(g_fontMono);
+                    ImGui::TextColored(PlaceColour(paceBoard->place), "%s", FormatValue(paceBoard->metric, paceBoard->best).c_str());
+                    ImGui::PopFont();
+                    if (paceBoard->place > 0)
+                    {
+                        ImGui::SameLine(0.0f, 6.0f * s);
+                        ImGui::TextColored(PlaceColour(paceBoard->place), "(#%d of %d)", paceBoard->place, paceBoard->players);
+                    }
+                }
+                ImGui::PopFont();
+            }
+        }
+        else
+        {
+            bool anyBlocked = false;
+            for (const auto& p : lobbyPlayers) if (p.status == "blocked") anyBlocked = true;
+            DrawAllowedCars(anyBlocked, s, 0);
+            ImGui::Dummy(ImVec2(0.0f, 6.0f * s));
+            if (ImGui::BeginTable("##scoreboard_lobby", 4, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_PadOuterX))
+            {
+                ImGui::TableSetupColumn("Driver", ImGuiTableColumnFlags_WidthFixed, 170.0f * s);
+                ImGui::TableSetupColumn("Car", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 92.0f * s);
+                ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, 64.0f * s);
+
+                ImGui::PushFont(g_fontMicro);
+                ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+                for (int c = 0; c < 4; ++c)
+                {
+                    ImGui::TableSetColumnIndex(c);
+                    ImGui::TextColored(Text3, "%s", ImGui::TableGetColumnName(c));
+                }
+                ImGui::PopFont();
+
+                const ImU32 altBg = ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 0.025f));
+                for (size_t i = 0; i < lobbyPlayers.size(); ++i)
+                {
+                    const LobbyPlayer& p = lobbyPlayers[i];
+                    ImGui::TableNextRow();
+                    if (i % 2 == 1) ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, altBg);
+                    ImGui::PushFont(g_fontSmall);
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::TextColored(Text1, "%s", p.name.c_str());
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TextColored(p.car.empty() ? Text3 : Text2, "%s", p.car.empty() ? "Picking a car" : p.car.c_str());
+                    ImGui::TableSetColumnIndex(2);
+                    ImGui::TextColored(StatusColour(p.status), "%s", StatusLabel(p.status));
+                    ImGui::TableSetColumnIndex(3);
+                    const int pMs = p.pingMs >= 0 ? p.pingMs : ServerLink::GetPlayerPingMs(p.name);
+                    DrawPingCell(pMs);
+                    ImGui::PopFont();
+                }
+                ImGui::EndTable();
+            }
+        }
+
+        ImGui::Dummy(ImVec2(0.0f, 6.0f * s));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0.0f, 6.0f * s));
+        ImGui::PushFont(g_fontSmall);
+        DrawKeyHint(g_scoreboardKeyName.c_str(), "hold to view", s);
+        ImGui::SameLine(0.0f, 14.0f * s);
+        DrawKeyHint(g_toggleKeyName.c_str(), g_hudVisible ? "hide HUD" : "show HUD", s);
+        ImGui::PopFont();
+
+        ImGui::End();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+    }
+
     static void BeforePresent(IDirect3DDevice9* device, IDirect3DSwapChain9*)
     {
         if (!g_ready || g_deviceLost) return;
@@ -1171,6 +1693,12 @@ namespace Overlay
         const bool front = GameInFront();
         EventVote::Poll(front);
         const EventVote::View vote = EventVote::Snapshot();
+        if (ToggleKeyPressed(g_toggleKey, front && !vote.windowOpen))
+        {
+            g_hudVisible = !g_hudVisible;
+        }
+        const bool scoreboardHeld = front && !vote.windowOpen && g_scoreboardKey > 0 &&
+                                    (GetAsyncKeyState(g_scoreboardKey) & 0x8000) != 0;
 
         // Copy what to show, so the other threads aren't held up while drawing.
         bool showStanding, showLobby, paceBarShown;
@@ -1183,9 +1711,9 @@ namespace Overlay
         const double now = Now();
         {
             Guard guard;
-            showStanding = g_racing && !g_standingTrack.empty() && g_standingTrack == g_trackKey && g_standingMode == g_raceMode;
-            showLobby = g_lobbyCarsShown && !g_racing && !g_lobbyPlayers.empty();
-            if (showLobby)
+            showStanding = g_hudVisible && g_racing && !g_standingTrack.empty() && g_standingTrack == g_trackKey && g_standingMode == g_raceMode;
+            showLobby = g_hudVisible && g_lobbyCarsShown && !g_racing && !g_lobbyPlayers.empty();
+            if (showLobby || scoreboardHeld)
             {
                 lobbyRoom = g_lobbyRoom;
                 lobbyAtmosphere = g_lobbyAtmosphere;
@@ -1206,11 +1734,13 @@ namespace Overlay
             for (size_t i = 0; i < g_noticeQueue.size() && notices.size() < 4; ++i)
             {
                 if (g_noticeQueue[i].shownAt < 0.0) g_noticeQueue[i].shownAt = now;
-                if (g_notices || g_noticeQueue[i].kind == "refused") notices.push_back(g_noticeQueue[i]);
+                if ((g_hudVisible && g_notices) || g_noticeQueue[i].kind == "refused") notices.push_back(g_noticeQueue[i]);
             }
         }
-        const ReShifted::Indicator shift = ReShifted::GetIndicator();
-        if (!showStanding && !showLobby && notices.empty() && !g_test && !vote.windowOpen && !vote.voteActive && !shift.shown) return;
+        const std::vector<RaceResults::LiveRacer> liveRacers = scoreboardHeld ? RaceResults::GetLiveRacers() : std::vector<RaceResults::LiveRacer>();
+        const bool showScoreboard = scoreboardHeld && (!liveRacers.empty() || !lobbyPlayers.empty());
+        const ReShifted::Indicator shift = g_hudVisible ? ReShifted::GetIndicator() : ReShifted::Indicator();
+        if (!showStanding && !showLobby && !showScoreboard && notices.empty() && !g_test && !vote.windowOpen && !vote.voteActive && !shift.shown) return;
         if (!g_drawnOnce)
         {
             g_drawnOnce = true;
@@ -1250,15 +1780,18 @@ namespace Overlay
         }
 
         const float s = g_fontScaleBase * io.FontGlobalScale;
+        const int pingMs = ServerLink::GetPingMs();
         ImGui_ImplDX9_NewFrame();
         ImGui::NewFrame();
         const RaceResults::LivePace pace = (showStanding && paceBarShown) ? RaceResults::GetLivePace() : RaceResults::LivePace();
-        if (showStanding) DrawStanding(trackName, mode, boards, paceBarShown, pace, s);
-        if (showLobby) DrawLobby(lobbyRoom, lobbyAtmosphere, lobbyEvent, lobbyEvents, lobbyPlayers, lobbyTimer, vote, s);
+        if (showStanding) DrawStanding(trackName, mode, boards, paceBarShown, pace, pingMs, s);
+        if (showLobby) DrawLobby(lobbyRoom, lobbyAtmosphere, lobbyEvent, lobbyEvents, lobbyPlayers, lobbyTimer, vote, pingMs, s);
         if (!notices.empty()) DrawNotices(notices, now, s);
         if (shift.shown) DrawShiftIndicator(shift, s);
         if (vote.voteActive) DrawVotePopup(vote, s);
         if (vote.windowOpen) DrawVoteWindow(vote, s);
+        if (showScoreboard) DrawScoreboard(trackName, mode, boards, lobbyRoom, lobbyAtmosphere, lobbyEvent, lobbyEvents,
+                                           lobbyPlayers, lobbyTimer, vote, liveRacers, pingMs, s);
         if (g_test)
         {
             // A fixed panel bottom left, to check the overlay reaches the screen at all.
@@ -1375,6 +1908,7 @@ namespace Overlay
     void Init(uintptr_t baseModule, const std::string& version)
     {
         InitializeCriticalSection(&g_lock);
+        g_baseModule = baseModule;
         g_version = version;
         const std::string& settings = Log::SettingsPath();
         if (!settings.empty())
@@ -1384,6 +1918,11 @@ namespace Overlay
             g_test = GetPrivateProfileIntA("Overlay", "Test", 0, settings.c_str()) != 0;
             g_lobbyCarsShown = GetPrivateProfileIntA("Overlay", "LobbyCars", 1, settings.c_str()) != 0;
             g_paceBarShown = GetPrivateProfileIntA("Overlay", "PaceBar", 1, settings.c_str()) != 0;
+            char keyText[32] = {};
+            GetPrivateProfileStringA("Overlay", "ToggleKey", "F3", keyText, sizeof(keyText), settings.c_str());
+            g_toggleKey = ParseOverlayKey(keyText, VK_F3, &g_toggleKeyName);
+            GetPrivateProfileStringA("Overlay", "ScoreboardKey", "Tab", keyText, sizeof(keyText), settings.c_str());
+            g_scoreboardKey = ParseOverlayKey(keyText, VK_TAB, &g_scoreboardKeyName);
             char corner[32] = {};
             GetPrivateProfileStringA("Overlay", "Position", "TopRight", corner, sizeof(corner), settings.c_str());
             if (_stricmp(corner, "TopLeft") == 0) g_corner = TopLeft;
@@ -1393,7 +1932,6 @@ namespace Overlay
             g_userScale = (percent < 50 ? 50 : percent > 200 ? 200 : percent) / 100.0f;
         }
         if (!g_enabled) return;
-        (void)baseModule;
         if (!D3DHooks::Install())
         {
             Log::Warn("The overlay is off: the game's display couldn't be hooked.\n");

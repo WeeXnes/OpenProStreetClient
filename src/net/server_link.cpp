@@ -52,6 +52,7 @@ namespace ServerLink
     static bool g_pingSendNow = false;
     static double g_rttSmoothedMs = -1.0;
     static std::map<uint32_t, float> g_carLeadSeconds;
+    static std::map<std::string, int> g_playerRtts;
 
     static uint64_t NowMicros() {
         static LARGE_INTEGER freq = {};
@@ -70,6 +71,7 @@ namespace ServerLink
         g_pingSendNow = false;
         g_rttSmoothedMs = -1.0;
         g_carLeadSeconds.clear();
+        g_playerRtts.clear();
         LeaveCriticalSection(&g_pingLock);
     }
 
@@ -191,6 +193,13 @@ namespace ServerLink
             std::vector<Overlay::LobbyPlayer> players;
             const int count = atoi(ParamValue(xml, "cars").c_str());
             const std::string statuses = ParamValue(xml, "st");
+            const std::string rttsParam = ParamValue(xml, "rtts");
+            std::vector<int> rtts;
+            if (!rttsParam.empty()) {
+                std::stringstream ss(rttsParam);
+                std::string tok;
+                while (std::getline(ss, tok, ',')) rtts.push_back(atoi(tok.c_str()));
+            }
             for (int i = 0; i < count && i < 8; ++i) {
                 const std::string packed = ParamValue(xml, "c" + std::to_string(i));
                 const size_t bar = packed.find('|');
@@ -198,6 +207,7 @@ namespace ServerLink
                 Overlay::LobbyPlayer p;
                 p.name = packed.substr(0, bar);
                 p.car = packed.substr(bar + 1);
+                p.pingMs = static_cast<size_t>(i) < rtts.size() ? rtts[static_cast<size_t>(i)] : -1;
                 const char code = static_cast<size_t>(i) < statuses.size() ? statuses[static_cast<size_t>(i)] : '\0';
                 if (code == 'b') p.status = "blocked";
                 else if (code == 'g') p.status = "racing";
@@ -206,6 +216,21 @@ namespace ServerLink
                 else if (code == 'r') p.status = "ready";
                 else p.status = p.car.empty() ? "picking" : "ready";
                 players.push_back(p);
+            }
+            if (g_pingLockReady) {
+                EnterCriticalSection(&g_pingLock);
+                if (count == 0) {
+                    g_playerRtts.clear();
+                } else {
+                    for (Overlay::LobbyPlayer& p : players) {
+                        if (p.pingMs >= 0) g_playerRtts[p.name] = p.pingMs;
+                        else {
+                            const auto it = g_playerRtts.find(p.name);
+                            if (it != g_playerRtts.end()) p.pingMs = it->second;
+                        }
+                    }
+                }
+                LeaveCriticalSection(&g_pingLock);
             }
             const int ev = atoi(ParamValue(xml, "ev").c_str());
             const int evs = atoi(ParamValue(xml, "evs").c_str());
@@ -343,8 +368,22 @@ namespace ServerLink
                 if (leadSec > MAX_CAR_LEAD_SECONDS) leadSec = MAX_CAR_LEAD_SECONDS;
                 updated[carId] = leadSec;
             }
+            const std::string playerRttsParam = ParamValue(xml, "r");
+            std::map<std::string, int> updatedPlayerRtts;
+            if (!playerRttsParam.empty()) {
+                std::stringstream ss(playerRttsParam);
+                std::string tok;
+                while (std::getline(ss, tok, ',')) {
+                    const size_t bar = tok.find('|');
+                    if (bar == std::string::npos) continue;
+                    const std::string name = tok.substr(0, bar);
+                    const int rttMs = atoi(tok.substr(bar + 1).c_str());
+                    if (!name.empty() && rttMs >= 0) updatedPlayerRtts[name] = rttMs;
+                }
+            }
             EnterCriticalSection(&g_pingLock);
             g_carLeadSeconds.swap(updated);
+            for (const auto& entry : updatedPlayerRtts) g_playerRtts[entry.first] = entry.second;
             LeaveCriticalSection(&g_pingLock);
         }
     }
@@ -640,5 +679,24 @@ namespace ServerLink
         if (it != g_carLeadSeconds.end()) lead = it->second;
         LeaveCriticalSection(&g_pingLock);
         return lead;
+    }
+
+    int GetPingMs() {
+        if (!g_pingLockReady) return -1;
+        int ping = -1;
+        EnterCriticalSection(&g_pingLock);
+        if (g_rttSmoothedMs >= 0.0) ping = static_cast<int>(g_rttSmoothedMs + 0.5);
+        LeaveCriticalSection(&g_pingLock);
+        return ping;
+    }
+
+    int GetPlayerPingMs(const std::string& name) {
+        if (!g_pingLockReady || name.empty()) return -1;
+        int ping = -1;
+        EnterCriticalSection(&g_pingLock);
+        const std::map<std::string, int>::const_iterator it = g_playerRtts.find(name);
+        if (it != g_playerRtts.end()) ping = it->second;
+        LeaveCriticalSection(&g_pingLock);
+        return ping;
     }
 }

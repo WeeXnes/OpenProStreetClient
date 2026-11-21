@@ -1,6 +1,7 @@
 #include "game/car_lock.h"
 #include "game/car.h"
 #include "log.h"
+#include <algorithm>
 #include <cstring>
 #include <mutex>
 #include <set>
@@ -74,6 +75,17 @@ namespace CarLock
         g_allowed.swap(allowed);
         g_showAll = false;
         g_backupSameCar = 0;
+    }
+
+    std::vector<std::string> GetAllowedCarNames() {
+        std::vector<std::string> names;
+        std::lock_guard<std::mutex> lock(g_lock);
+        names.reserve(g_allowed.size());
+        for (const std::string& model : g_allowed) {
+            names.push_back(TranslateCarIdentifier(model));
+        }
+        std::sort(names.begin(), names.end());
+        return names;
     }
 
     // A car whose model isn't known stays, so a gap in the car table never hides a car the server

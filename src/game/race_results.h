@@ -43,7 +43,24 @@ namespace RaceResults
         unsigned long lastSplitAgeMs = 0;
     };
 
+    struct LiveRacer
+    {
+        std::string name;
+        bool        isLocal = false;
+        bool        isAI = false;
+        int         rank = 0;
+        int         lapsCompleted = 0;
+        float       raceElapsed = 0.0f;
+        float       bestLap = 0.0f;
+        float       lastLap = 0.0f;
+        float       score = 0.0f;
+        float       topSpeedKmh = 0.0f;
+        float       wheelieM = 0.0f;
+        bool        finished = false;
+    };
+
     LivePace GetLivePace();
+    std::vector<LiveRacer> GetLiveRacers();
     void Init(uintptr_t baseModule);
 }
 

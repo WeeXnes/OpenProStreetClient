@@ -46,6 +46,11 @@ namespace ServerLink
     // One-way network lead in seconds for a remote player's ServerCarID (0.0f if unknown).
     float GetCarLeadSeconds(uint32_t carId);
 
+    // Smoothed client-server RTT in milliseconds (-1 if not yet measured or disconnected).
+    int GetPingMs();
+    // Last known server RTT in milliseconds for a player in the room (-1 if unknown).
+    int GetPlayerPingMs(const std::string& name);
+
     // The player picked quick match in the game's menus, so the server should match them. This
     // happens before the game connects, so it's sent as soon as the connection starts.
     // location, difficulty and events ("key:laps:heats,...") are the race day to create if no room

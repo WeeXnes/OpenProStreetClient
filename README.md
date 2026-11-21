@@ -127,7 +127,7 @@ The plugin writes `%LOCALAPPDATA%\OpenProStreet\event_catalog.json`. Copy it nex
 
 ### Overlay
 
-During a race on an OpenProStreet server, a card in a corner shows where you stand on that track, layout and mode: the server record and its holder, your best and place, and the time just ahead of yours to beat. After each race, a short notification says what it meant: a new personal best or server record with your place, the XP you earned, a new level, or why the result didn't count. It's drawn with Dear ImGui on the game's Direct3D 9 frames, in the style of the website, and never takes the mouse or keyboard.
+During a race on an OpenProStreet server, a card in a corner shows where you stand on that track, layout and mode: the server record and its holder, your best and place, the time just ahead of yours to beat, and your live latency to the server. In a room between races, it shows who is in the room, their cars, ready status, latency, and any allowed car restrictions. Hold **Tab** in a race or lobby for a centered live scoreboard with everyone's rank, car, times/scores and ping, and press **F3** to hide or show the corner HUD. After each race, a short notification says what it meant: a new personal best or server record with your place, the XP you earned, a new level, or why the result didn't count. It's drawn with Dear ImGui on the game's Direct3D 9 frames, in the style of the website, and never takes the mouse or keyboard.
 
 ```ini
 [Overlay]
@@ -137,6 +137,8 @@ Position=TopRight   ; TopLeft, TopRight, BottomLeft or BottomRight
 Scale=100           ; percent, 50 to 200
 Test=0              ; 1 always shows a small panel bottom left, to check the overlay reaches the screen
 LobbyCars=1         ; in a room, outside races, a card with everyone in it and the car they picked
+ToggleKey=F3        ; hotkey to hide or show the corner HUD
+ScoreboardKey=Tab   ; hold to show the centered live scoreboard
 ```
 
 ### Day and night
