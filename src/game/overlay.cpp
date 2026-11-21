@@ -30,6 +30,8 @@ namespace Overlay
     enum Corner { TopLeft, TopRight, BottomLeft, BottomRight };
     static bool g_enabled = true;
     static bool g_notices = true;
+    static bool g_scoreboard = true;
+    static bool g_pingShown = true;
     static bool g_hudVisible = true;
     static int  g_toggleKey = VK_F3;
     static int  g_scoreboardKey = VK_TAB;
@@ -511,7 +513,7 @@ namespace Overlay
 
     static void DrawPingRight(int pingMs, float s)
     {
-        if (pingMs < 0) return;
+        if (!g_pingShown || pingMs < 0) return;
         char text[24];
         snprintf(text, sizeof(text), "%d ms", pingMs);
         ImGui::PushFont(g_fontMono);
@@ -741,12 +743,13 @@ namespace Overlay
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0.0f, 4.0f * s));
 
-        if (ImGui::BeginTable("##lobbycars", 4, ImGuiTableFlags_SizingFixedFit))
+        const int lobbyCols = g_pingShown ? 4 : 3;
+        if (ImGui::BeginTable("##lobbycars", lobbyCols, ImGuiTableFlags_SizingFixedFit))
         {
             ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthFixed, 110.0f * s);
             ImGui::TableSetupColumn("car", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("state", ImGuiTableColumnFlags_WidthFixed, 68.0f * s);
-            ImGui::TableSetupColumn("ping", ImGuiTableColumnFlags_WidthFixed, 54.0f * s);
+            if (g_pingShown) ImGui::TableSetupColumn("ping", ImGuiTableColumnFlags_WidthFixed, 54.0f * s);
             ImGui::PushFont(g_fontSmall);
             for (const auto& entry : players)
             {
@@ -758,17 +761,20 @@ namespace Overlay
                 else ImGui::TextColored(Text2, "%s", entry.car.c_str());
                 ImGui::TableSetColumnIndex(2);
                 ImGui::TextColored(StatusColour(entry.status), "%s", StatusLabel(entry.status));
-                ImGui::TableSetColumnIndex(3);
-                const int pMs = entry.pingMs >= 0 ? entry.pingMs : ServerLink::GetPlayerPingMs(entry.name);
-                if (pMs >= 0)
+                if (g_pingShown)
                 {
-                    ImGui::PushFont(g_fontMono);
-                    ImGui::TextColored(PingColour(pMs), "%d ms", pMs);
-                    ImGui::PopFont();
-                }
-                else
-                {
-                    ImGui::TextColored(Text3, "-");
+                    ImGui::TableSetColumnIndex(3);
+                    const int pMs = entry.pingMs >= 0 ? entry.pingMs : ServerLink::GetPlayerPingMs(entry.name);
+                    if (pMs >= 0)
+                    {
+                        ImGui::PushFont(g_fontMono);
+                        ImGui::TextColored(PingColour(pMs), "%d ms", pMs);
+                        ImGui::PopFont();
+                    }
+                    else
+                    {
+                        ImGui::TextColored(Text3, "-");
+                    }
                 }
             }
             ImGui::PopFont();
@@ -1383,7 +1389,8 @@ namespace Overlay
             const bool isWheelie = mode.find("Wheelie") != std::string::npos;
             const bool isDrag = mode.find("Drag") != std::string::npos;
             const bool isSpeed = mode.find("Speed") != std::string::npos;
-            const int cols = isDrift ? 7 : isWheelie ? 7 : isSpeed ? 7 : isDrag ? 8 : 8;
+            const int baseCols = isDrift ? 6 : isWheelie ? 6 : isSpeed ? 6 : isDrag ? 7 : 7;
+            const int cols = baseCols + (g_pingShown ? 1 : 0);
 
             const std::string localCar = g_baseModule ? TranslateCarIdentifier(ReadRawCarIdentifier(g_baseModule)) : std::string();
 
@@ -1424,7 +1431,7 @@ namespace Overlay
                     ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 96.0f * s);
                     ImGui::TableSetupColumn("Top Speed", ImGuiTableColumnFlags_WidthFixed, 92.0f * s);
                 }
-                ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, 62.0f * s);
+                if (g_pingShown) ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, 62.0f * s);
 
                 ImGui::PushFont(g_fontMicro);
                 ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
@@ -1571,17 +1578,20 @@ namespace Overlay
                         ImGui::PopFont();
                     }
 
-                    ImGui::TableSetColumnIndex(colIdx);
-                    if (r.isAI)
+                    if (g_pingShown)
                     {
-                        ImGui::TextColored(Text3, "-");
-                    }
-                    else
-                    {
-                        int pMs = lp ? lp->pingMs : -1;
-                        if (pMs < 0) pMs = ServerLink::GetPlayerPingMs(r.name);
-                        if (pMs < 0 && r.isLocal) pMs = pingMs;
-                        DrawPingCell(pMs);
+                        ImGui::TableSetColumnIndex(colIdx);
+                        if (r.isAI)
+                        {
+                            ImGui::TextColored(Text3, "-");
+                        }
+                        else
+                        {
+                            int pMs = lp ? lp->pingMs : -1;
+                            if (pMs < 0) pMs = ServerLink::GetPlayerPingMs(r.name);
+                            if (pMs < 0 && r.isLocal) pMs = pingMs;
+                            DrawPingCell(pMs);
+                        }
                     }
                     ImGui::PopFont();
                 }
@@ -1632,16 +1642,17 @@ namespace Overlay
             for (const auto& p : lobbyPlayers) if (p.status == "blocked") anyBlocked = true;
             DrawAllowedCars(anyBlocked, s, 0);
             ImGui::Dummy(ImVec2(0.0f, 6.0f * s));
-            if (ImGui::BeginTable("##scoreboard_lobby", 4, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_PadOuterX))
+            const int lobbyCols = g_pingShown ? 4 : 3;
+            if (ImGui::BeginTable("##scoreboard_lobby", lobbyCols, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_PadOuterX))
             {
                 ImGui::TableSetupColumn("Driver", ImGuiTableColumnFlags_WidthFixed, 170.0f * s);
                 ImGui::TableSetupColumn("Car", ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 92.0f * s);
-                ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, 64.0f * s);
+                if (g_pingShown) ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, 64.0f * s);
 
                 ImGui::PushFont(g_fontMicro);
                 ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
-                for (int c = 0; c < 4; ++c)
+                for (int c = 0; c < lobbyCols; ++c)
                 {
                     ImGui::TableSetColumnIndex(c);
                     ImGui::TextColored(Text3, "%s", ImGui::TableGetColumnName(c));
@@ -1661,9 +1672,12 @@ namespace Overlay
                     ImGui::TextColored(p.car.empty() ? Text3 : Text2, "%s", p.car.empty() ? "Picking a car" : p.car.c_str());
                     ImGui::TableSetColumnIndex(2);
                     ImGui::TextColored(StatusColour(p.status), "%s", StatusLabel(p.status));
-                    ImGui::TableSetColumnIndex(3);
-                    const int pMs = p.pingMs >= 0 ? p.pingMs : ServerLink::GetPlayerPingMs(p.name);
-                    DrawPingCell(pMs);
+                    if (g_pingShown)
+                    {
+                        ImGui::TableSetColumnIndex(3);
+                        const int pMs = p.pingMs >= 0 ? p.pingMs : ServerLink::GetPlayerPingMs(p.name);
+                        DrawPingCell(pMs);
+                    }
                     ImGui::PopFont();
                 }
                 ImGui::EndTable();
@@ -1697,7 +1711,7 @@ namespace Overlay
         {
             g_hudVisible = !g_hudVisible;
         }
-        const bool scoreboardHeld = front && !vote.windowOpen && g_scoreboardKey > 0 &&
+        const bool scoreboardHeld = g_scoreboard && front && !vote.windowOpen && g_scoreboardKey > 0 &&
                                     (GetAsyncKeyState(g_scoreboardKey) & 0x8000) != 0;
 
         // Copy what to show, so the other threads aren't held up while drawing.
@@ -1915,6 +1929,8 @@ namespace Overlay
         {
             g_enabled = GetPrivateProfileIntA("Overlay", "Enabled", 1, settings.c_str()) != 0;
             g_notices = GetPrivateProfileIntA("Overlay", "Notifications", 1, settings.c_str()) != 0;
+            g_scoreboard = GetPrivateProfileIntA("Overlay", "Scoreboard", 1, settings.c_str()) != 0;
+            g_pingShown = GetPrivateProfileIntA("Overlay", "Ping", 1, settings.c_str()) != 0;
             g_test = GetPrivateProfileIntA("Overlay", "Test", 0, settings.c_str()) != 0;
             g_lobbyCarsShown = GetPrivateProfileIntA("Overlay", "LobbyCars", 1, settings.c_str()) != 0;
             g_paceBarShown = GetPrivateProfileIntA("Overlay", "PaceBar", 1, settings.c_str()) != 0;

@@ -26,7 +26,7 @@
 
 discord::Core *discordCore = nullptr;
 
-const std::string version = "10.19";
+const std::string version = "10.20";
 
 // Every hook patches nfs.exe v1.1 at fixed addresses, so the client only runs on that layout. The
 // game's version check pushes 1, 1 here (MultiFix reads the same bytes). A packed exe, such as the

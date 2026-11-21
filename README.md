@@ -133,6 +133,8 @@ During a race on an OpenProStreet server, a card in a corner shows where you sta
 [Overlay]
 Enabled=1
 Notifications=1
+Scoreboard=1        ; 1 enables the centered live scoreboard when holding ScoreboardKey
+Ping=1              ; 1 shows server and player latency (ms) in the overlay
 Position=TopRight   ; TopLeft, TopRight, BottomLeft or BottomRight
 Scale=100           ; percent, 50 to 200
 Test=0              ; 1 always shows a small panel bottom left, to check the overlay reaches the screen
