@@ -227,6 +227,9 @@ jobs:
     artifacts: '**'
     condition: SUCCESSFUL
     optional: false
+  triggers:
+  - type: PullRequestUpdateTrigger
+    branches: master
   retryCondition: never
   maxAttempts: 4
   retryDelay: 30
