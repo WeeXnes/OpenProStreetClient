@@ -1923,6 +1923,7 @@ namespace Overlay
         ok &= WriteIniBool(path, "Camera", "RightStickOrbit", cam.enabled);
         ok &= WriteIniBool(path, "Camera", "OrbitBlockShift", cam.blockShift);
         ok &= WriteIniBool(path, "Camera", "OrbitInvertX", cam.invertX);
+        ok &= WriteIniBool(path, "Camera", "OrbitInvertY", cam.invertY);
         ok &= WriteIniInt(path, "Camera", "OrbitDeadzone", static_cast<int>(std::lround(cam.deadzone * 100.0f)));
         ok &= WriteIniInt(path, "Camera", "OrbitSnapTime", static_cast<int>(std::lround(cam.smoothTimeSec * 1000.0f)));
         ok &= WriteIniInt(path, "Camera", "OrbitBackTime", static_cast<int>(std::lround(cam.returnTimeSec * 1000.0f)));
@@ -2135,6 +2136,7 @@ namespace Overlay
                 if (!cam.enabled) ImGui::BeginDisabled();
                 changed |= ImGui::Checkbox("Block automatic gear shifts while orbiting", &cam.blockShift);
                 changed |= ImGui::Checkbox("Invert left / right orbit direction", &cam.invertX);
+                changed |= ImGui::Checkbox("Invert front / back orbit direction (Y)", &cam.invertY);
                 ImGui::Dummy(ImVec2(0.0f, 4.0f * s));
 
                 int dzPct = static_cast<int>(std::lround(cam.deadzone * 100.0f));
