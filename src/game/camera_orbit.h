@@ -13,6 +13,7 @@ namespace CameraOrbit
         float smoothTimeSec = 0.05f;    // Time to reach a new angle (0 = instant)
         float returnTimeSec = 0.25f;    // Time to swing back behind the car after release
         bool invertX = false;           // Swap the left/right sides
+        bool invertY = false;           // Swap front/back (stick back looks back, forward stays behind)
         float minElevRad = 0.035f;      // Keep camera above road plane (~2 deg above target)
         float maxElevRad = 0.88f;       // Cap vertical tilt below zenith (~50.4 deg)
     };
@@ -25,6 +26,7 @@ namespace CameraOrbit
     //   up    -> in front of the car, looking back at it (yaw 180)
     //   right -> on the car's left side  (yaw +90)
     //   left  -> on the car's right side (yaw -90)
+    // invertX mirrors left/right, invertY mirrors up/down (front/back).
     class Controller
     {
     public:
@@ -48,7 +50,7 @@ namespace CameraOrbit
         }
 
         // Returns false inside the deadzone. Otherwise outYaw is the orbit angle in radians.
-        static bool StickToYaw(float normX, float normY, float deadzone, bool invertX, float& outYaw)
+        static bool StickToYaw(float normX, float normY, float deadzone, bool invertX, bool invertY, float& outYaw)
         {
             const float dz = Clamp(deadzone, 0.05f, 0.90f);
             const float mag = sqrtf(normX * normX + normY * normY);
@@ -56,7 +58,7 @@ namespace CameraOrbit
                 outYaw = 0.0f;
                 return false;
             }
-            outYaw = atan2f(invertX ? -normX : normX, -normY);
+            outYaw = atan2f(invertX ? -normX : normX, invertY ? normY : -normY);
             return true;
         }
 
@@ -79,7 +81,7 @@ namespace CameraOrbit
             }
 
             float targetYaw = 0.0f;
-            const bool stickActive = StickToYaw(normStickX, normStickY, cfg.deadzone, cfg.invertX, targetYaw);
+            const bool stickActive = StickToYaw(normStickX, normStickY, cfg.deadzone, cfg.invertX, cfg.invertY, targetYaw);
             const float timeToReach = stickActive ? cfg.smoothTimeSec : cfg.returnTimeSec;
 
             // Always turn the short way round, also across the 180 degree seam at the front.
