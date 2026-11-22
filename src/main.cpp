@@ -26,7 +26,7 @@
 
 discord::Core *discordCore = nullptr;
 
-const std::string baseVersion = "10.22";
+const std::string baseVersion = "10.23";
 #ifdef OPENPROSTREET_VERSION_SUFFIX
 const std::string version = baseVersion + OPENPROSTREET_VERSION_SUFFIX;
 #else
