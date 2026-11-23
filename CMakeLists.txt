@@ -106,6 +106,7 @@ if(EXISTS "${THIRDPARTY_SDK_DIR}")
             -static-libgcc
             -static-libstdc++
             -static
+            -Wl,--add-stdcall-alias
         )
         # Most of the file would be debug info from the static libraries. The release file leaves
         # it out, and the copy with it stays next to it, to look into crashes and detections.
@@ -121,6 +122,7 @@ if(EXISTS "${THIRDPARTY_SDK_DIR}")
         ws2_32
         crypt32
         bcrypt
+        shell32
     )
 else()
     # Traditional vcpkg setup for Windows builds
