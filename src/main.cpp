@@ -50,7 +50,7 @@ static int __cdecl CrtStartupHook() {
   return reinterpret_cast<int(__cdecl*)()>(g_origCrtStartup)();
 }
 
-const std::string baseVersion = "10.23";
+const std::string baseVersion = "10.24";
 #ifdef OPENPROSTREET_VERSION_SUFFIX
 const std::string version = baseVersion + OPENPROSTREET_VERSION_SUFFIX;
 #else
