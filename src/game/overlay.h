@@ -86,6 +86,8 @@ namespace Overlay
     {
         bool                     inRoom = false;
         std::string              room;
+        std::string              roomId;
+        std::string              inviteSecret;
         std::string              atmosphere;
         int                      eventIndex = 0;
         int                      eventCount = 0;
@@ -95,11 +97,16 @@ namespace Overlay
     };
 
     void SetLobbyState(const std::string& room, const std::string& atmosphere, int eventIndex, int eventCount,
-                       const std::vector<LobbyPlayer>& players);
+                       const std::vector<LobbyPlayer>& players,
+                       const std::string& roomId = "", const std::string& inviteSecret = "");
     void SetLobbyTimer(const LobbyTimerState& timer);
     LobbySnapshot GetLobbySnapshot();
     bool GetPausedTimerSeconds(int* outSeconds);
     void ResetRoomState();
+
+    // Discord "Ask to Join" prompt in the overlay, answered with F5/F6 without losing focus.
+    void PushJoinRequest(int64_t userId, const std::string& username);
+    bool ConsumeJoinRequestReply(int64_t* outUserId, bool* outAccept);
 
     // The encrypted connection to the server is up, which happens on logging in from the main menu.
     // Shows a short notice, so it's clear the overlay works before the first race.

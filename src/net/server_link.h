@@ -57,4 +57,6 @@ namespace ServerLink
     // is open. events can be empty.
     void RequestQuickMatch(bool ranked, const std::string& location, int difficulty, const std::string& events);
     void CancelQuickMatch();
+    void RequestJoinInvite(const std::string& secret);
+    void CancelInvite();
 }

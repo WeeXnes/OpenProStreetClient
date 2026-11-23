@@ -149,7 +149,7 @@ jobs:
         fi
         sanitized=$(printf '%s' "$branch" | tr '/_ ' '---' | tr -cd 'A-Za-z0-9.-')
         echo "$sanitized" > branch.txt
-        echo "${base}-fb-${sanitized}" > version.txt
+        echo "${base}-fb-${sanitized}-b@build_number@" > version.txt
         echo "Feature build version: $(cat version.txt)"
     runAs: 0:0
     useTTY: true
@@ -169,7 +169,7 @@ jobs:
       commands: |
         set -e
         chmod +x ./build.sh
-        OPENPROSTREET_BRANCH="$(cat branch.txt)" ./build.sh
+        OPENPROSTREET_BRANCH="$(cat branch.txt)" OPENPROSTREET_BUILD_NUMBER="@build_number@" ./build.sh
         mkdir -p ./release
         cp build/OpenProStreetClient.asi ./release/
         cp build/discord_game_sdk.dll ./release/

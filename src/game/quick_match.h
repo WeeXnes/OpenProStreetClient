@@ -16,4 +16,10 @@ namespace QuickMatch
 
     // The server's quick play race day for this player, from the client channel. Empty: none yet.
     void SetServerRoom(const std::string& gameName);
+
+    // Discord invites: accepts an invite secret (from OnActivityJoin), resolves it with the server,
+    // and joins that room automatically when entering LAN Play.
+    void RequestInviteJoin(const std::string& secret);
+    void SetInviteRoom(const std::string& gameName, const std::string& displayName, const std::string& error);
+    void OnServerConnected();
 }

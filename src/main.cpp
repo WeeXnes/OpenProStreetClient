@@ -10,6 +10,7 @@
 #include "game/atmosphere.h"
 #include "game/camera_orbit.h"
 #include "game/graphics.h"
+#include "game/hooks.h"
 #include "game/reshifted.h"
 #include "game/textures.h"
 #include "game/lanfix.h"
@@ -20,11 +21,34 @@
 #include "net/server_link.h"
 #include "log.h"
 #include <cstdio>
+#include <cstring>
 #include <discord.h>
+#include <shellapi.h>
 #include <string>
 #include <windows.h>
 
 discord::Core *discordCore = nullptr;
+static HMODULE g_selfModule = nullptr;
+static std::string g_gameDir;
+static void* g_origCrtStartup = nullptr;
+
+// Unpacked nfs.exe v1.1 __tmainCRTStartup (jumped to from AddressOfEntryPoint 0x828C25);
+// starts with `push 0x10; push 0xA42D70` (7 bytes).
+static const uintptr_t CRT_STARTUP = 0x4289CD;
+
+static void EnsureGameWorkingDirectory() {
+  if (!g_gameDir.empty()) {
+    SetCurrentDirectoryA(g_gameDir.c_str());
+  }
+}
+
+// Ultimate ASI Loader saves GetCurrentDirectoryW before loading plugins and restores it via
+// SetCurrentDirectoryW after each LoadLibraryW returns, undoing DllMain's SetCurrentDirectoryA.
+// Re-apply right as __tmainCRTStartup starts (after LoadEverything finishes, before WinMain/d3d9).
+static int __cdecl CrtStartupHook() {
+  EnsureGameWorkingDirectory();
+  return reinterpret_cast<int(__cdecl*)()>(g_origCrtStartup)();
+}
 
 const std::string baseVersion = "10.23";
 #ifdef OPENPROSTREET_VERSION_SUFFIX
@@ -58,18 +82,53 @@ static DWORD WINAPI UnsupportedGameNotice(LPVOID) {
   return 0;
 }
 
+// Exported for rundll32.exe so Discord's "Launch Game" URI launches nfs.exe with WorkingDirectory = <game>.
+extern "C" __declspec(dllexport) void CALLBACK LaunchGame(HWND, HINSTANCE, LPSTR, int) {
+  char asiPath[MAX_PATH] = {};
+  if (!g_selfModule || GetModuleFileNameA(g_selfModule, asiPath, MAX_PATH) == 0) return;
+  std::string dir(asiPath);
+  const size_t fileSlash = dir.find_last_of("\\/");
+  if (fileSlash == std::string::npos) return;
+  dir.resize(fileSlash);
+  const size_t parentSlash = dir.find_last_of("\\/");
+  if (parentSlash != std::string::npos) {
+    const std::string leaf = dir.substr(parentSlash + 1);
+    if (_stricmp(leaf.c_str(), "scripts") == 0) dir.resize(parentSlash);
+  }
+  const std::string exe = dir + "\\nfs.exe";
+  if (reinterpret_cast<INT_PTR>(ShellExecuteA(nullptr, "open", exe.c_str(), nullptr, dir.c_str(), SW_SHOWNORMAL)) <= 32) {
+    STARTUPINFOA si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (CreateProcessA(exe.c_str(), nullptr, nullptr, nullptr, FALSE, 0, nullptr, dir.c_str(), &si, &pi)) {
+      CloseHandle(pi.hThread);
+      CloseHandle(pi.hProcess);
+    }
+  }
+}
+
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
                       LPVOID lpReserved) {
   if (ul_reason_for_call == DLL_PROCESS_ATTACH) {
-    Log::Init(hModule);
-    Log::Debug("[OpenProStreet] ASI attached. "
-           "(https://code.weexnes.dev/OpenProStreet/client)\n");
+    g_selfModule = hModule;
     char procname[MAX_PATH];
     GetModuleFileNameA(NULL, procname, MAX_PATH);
     if (strstr(procname, "nfs.exe") == NULL) {
-      Log::Debug("[OpenProStreet] Not nfs.exe, exiting.\n");
       return TRUE;
     }
+
+    // Discord's Launch Game URL handler can spawn nfs.exe with Discord's working directory;
+    // ProStreet opens game assets via relative paths, so anchor cwd to the game folder.
+    const std::string exeStr(procname);
+    const size_t slash = exeStr.find_last_of("\\/");
+    if (slash != std::string::npos) {
+      g_gameDir = exeStr.substr(0, slash);
+      EnsureGameWorkingDirectory();
+    }
+
+    Log::Init(hModule);
+    Log::Debug("[OpenProStreet] ASI attached. "
+           "(https://code.weexnes.dev/OpenProStreet/client)\n");
 
     Log::Debug("[OpenProStreet] nfs.exe detected.\n");
     Log::Banner("OpenProStreet Client " + version,
@@ -87,6 +146,9 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
       if (notice) CloseHandle(notice);
       return TRUE;
     }
+
+    Hooks::InstallDetour(reinterpret_cast<void*>(baseModule + CRT_STARTUP),
+                         reinterpret_cast<void*>(CrtStartupHook), &g_origCrtStartup, 7);
 
     ServerLink::Init(baseModule);
     LANFix::Init();
@@ -109,7 +171,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
     CameraOrbit::Init(baseModule);
     ReShifted::Init(baseModule);
 
-    HANDLE hThread = CreateThread(NULL, 0, RpcThread, NULL, 0, NULL);
+    HANDLE hThread = CreateThread(NULL, 0, RpcThread, hModule, 0, NULL);
     if (hThread) {
       Log::Debug("[OpenProStreet] RPC thread created successfully.\n");
       CloseHandle(hThread);
