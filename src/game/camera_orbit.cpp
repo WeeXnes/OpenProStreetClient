@@ -293,6 +293,7 @@ namespace CameraOrbit
             g_cfg.returnTimeSec = Controller::Clamp(backMs / 1000.0f, 0.0f, 5.0f);
 
             g_cfg.invertX = GetPrivateProfileIntA("Camera", "OrbitInvertX", 0, settings.c_str()) != 0;
+            g_cfg.invertY = GetPrivateProfileIntA("Camera", "OrbitInvertY", 0, settings.c_str()) != 0;
         }
     }
 

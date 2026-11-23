@@ -210,6 +210,7 @@ OrbitDeadzone=30     ; how far the stick must be pushed before the camera moves,
 OrbitSnapTime=50     ; milliseconds to reach a new angle (0 = instant)
 OrbitBackTime=250    ; milliseconds to swing back behind the car after release (0 = instant)
 OrbitInvertX=0       ; 1 swaps the left and right sides
+OrbitInvertY=0       ; 1 swaps front and back (pull the stick back to look back)
 ```
 
 ### ReShifted automatic transmission

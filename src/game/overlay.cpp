@@ -89,6 +89,31 @@ namespace Overlay
     static std::string g_trackKey, g_trackName, g_raceMode;
     static std::string g_requestedTrack, g_requestedMode;
     static std::string g_standingTrack, g_standingMode;
+    // Finished heats/rounds of the current Race Day event, stacked above the live pace bar.
+    struct FinishedPace
+    {
+        int         number = 0;   // 1-based heat/round within the event
+        std::string metric;       // what was measured, as FormatValue understands it
+        double      value = 0.0;
+        double      target = 0.0; // what it was measured against (0 = nothing to beat yet)
+        std::string targetLabel;
+    };
+    static std::vector<FinishedPace> g_paceHistory;
+    static std::string g_paceHistoryKey; // room|event|track|mode the history belongs to
+    // Track and mode of the latest race; unlike g_trackKey/g_raceMode they stay set between heats.
+    static std::string g_paceTrack, g_paceMode;
+
+    // Call with g_lock held. A new Race Day event, room, track or mode starts a fresh history.
+    static std::string PaceHistoryKey()
+    {
+        return g_lobbyRoom + "|" + std::to_string(g_lobbyEventIndex) + "|" + g_paceTrack + "|" + g_paceMode;
+    }
+
+    static void ClearPaceHistory()
+    {
+        g_paceHistory.clear();
+        g_paceHistoryKey.clear();
+    }
     struct ChatToast
     {
         std::string sender;
@@ -398,10 +423,10 @@ namespace Overlay
         return topSpeed;
     }
 
-    static void DrawPaceBar(const std::string& mode, const std::vector<Board>& boards, const RaceResults::LivePace& pace, float s)
+    // Picks what the pace bar measures and what it is compared against.
+    static void ResolvePaceTarget(const std::string& mode, const std::vector<Board>& boards, float sessionBestLap,
+                                  std::string* metricOut, double* targetOut, std::string* labelOut, bool* oneLapOut)
     {
-        if (!pace.active) return;
-
         bool oneLapRace = false;
         const Board* board = PickPaceBoard(boards, &oneLapRace);
         std::string metric = board ? board->metric : (mode.find("Drift") != std::string::npos ? "score" : "best_lap");
@@ -414,11 +439,82 @@ namespace Overlay
             else if (board->record > 0.0) { target = board->record; targetLabel = "#1 Record"; }
         }
         // A lap in this race already beat it: the next lap chases that one.
-        if (metric == "best_lap" && !oneLapRace && pace.bestLap > 0.0f && (target <= 0.0 || pace.bestLap < target))
+        if (metric == "best_lap" && !oneLapRace && sessionBestLap > 0.0f && (target <= 0.0 || sessionBestLap < target))
         {
-            target = pace.bestLap;
+            target = sessionBestLap;
             targetLabel = "New PB";
         }
+        *metricOut = metric;
+        *targetOut = target;
+        *labelOut = targetLabel;
+        *oneLapOut = oneLapRace;
+    }
+
+    static bool LowerIsBetter(const std::string& metric)
+    {
+        return metric == "best_lap" || metric == "race_time";
+    }
+
+    // One compact line per finished heat/round: label, result, delta and a thin bar.
+    static void DrawFinishedPaces(const std::vector<FinishedPace>& history, float s)
+    {
+        if (history.empty()) return;
+        ImGui::Dummy(ImVec2(0.0f, 8.0f * s));
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0.0f, 4.0f * s));
+        for (const FinishedPace& h : history)
+        {
+            const bool timed = LowerIsBetter(h.metric);
+            const bool scored = h.metric == "score";
+            ImVec4 colour = Text2;
+            std::string deltaStr;
+            float fill = 1.0f;
+            if (h.target > 0.0)
+            {
+                const double delta = h.value - h.target;
+                const bool better = timed ? delta <= 0.0 : delta >= 0.0;
+                colour = better ? Success : (timed ? Danger : Info);
+                deltaStr = FormatSignedDelta(h.metric, delta);
+                const float ratio = static_cast<float>(h.value / h.target);
+                fill = ratio < 0.0f ? 0.0f : ratio > 1.0f ? 1.0f : ratio;
+            }
+
+            ImGui::PushFont(g_fontMicro);
+            ImGui::TextColored(Text3, "%s %d", scored ? "ROUND" : "HEAT", h.number);
+            ImGui::PopFont();
+            ImGui::SameLine(0.0f, 10.0f * s);
+            ImGui::PushFont(g_fontSmall);
+            ImGui::TextColored(Text1, "%s", FormatValue(h.metric, h.value).c_str());
+            if (!deltaStr.empty())
+            {
+                ImGui::SameLine(0.0f, 8.0f * s);
+                ImGui::TextColored(colour, "%s", deltaStr.c_str());
+                ImGui::SameLine(0.0f, 8.0f * s);
+                ImGui::TextColored(Text3, "vs %s", h.targetLabel.c_str());
+            }
+            ImGui::PopFont();
+
+            const ImVec2 at = ImGui::GetCursorScreenPos();
+            const float width = ImGui::GetContentRegionAvail().x;
+            const float height = 3.0f * s;
+            ImDrawList* draw = ImGui::GetWindowDrawList();
+            draw->AddRectFilled(at, ImVec2(at.x + width, at.y + height), ImGui::GetColorU32(Line), height);
+            draw->AddRectFilled(at, ImVec2(at.x + width * fill, at.y + height), ImGui::GetColorU32(h.target > 0.0 ? colour : Text3), height);
+            ImGui::Dummy(ImVec2(width, height + 3.0f * s));
+        }
+    }
+
+    static void DrawPaceBar(const std::string& mode, const std::vector<Board>& boards, const RaceResults::LivePace& pace,
+                            const std::vector<FinishedPace>& history, float s)
+    {
+        DrawFinishedPaces(history, s);
+        if (!pace.active) return;
+
+        bool oneLapRace = false;
+        std::string metric;
+        double target = 0.0;
+        std::string targetLabel;
+        ResolvePaceTarget(mode, boards, pace.bestLap, &metric, &target, &targetLabel, &oneLapRace);
 
         double current = 0.0;
         const char* heading = "LIVE PACE";
@@ -589,7 +685,8 @@ namespace Overlay
     }
 
     static void DrawStanding(const std::string& trackName, const std::string& mode, const std::vector<Board>& boards,
-                             bool paceBarShown, const RaceResults::LivePace& pace, int pingMs, float s)
+                             bool paceBarShown, const RaceResults::LivePace& pace,
+                             const std::vector<FinishedPace>& paceHistory, int pingMs, float s)
     {
         const ImVec2 display = ImGui::GetIO().DisplaySize;
         const float margin = 24.0f * s;
@@ -642,7 +739,7 @@ namespace Overlay
             }
             ImGui::EndTable();
         }
-        if (paceBarShown) DrawPaceBar(mode, boards, pace, s);
+        if (paceBarShown) DrawPaceBar(mode, boards, pace, paceHistory, s);
         ImGui::End();
     }
 
@@ -1826,6 +1923,7 @@ namespace Overlay
         ok &= WriteIniBool(path, "Camera", "RightStickOrbit", cam.enabled);
         ok &= WriteIniBool(path, "Camera", "OrbitBlockShift", cam.blockShift);
         ok &= WriteIniBool(path, "Camera", "OrbitInvertX", cam.invertX);
+        ok &= WriteIniBool(path, "Camera", "OrbitInvertY", cam.invertY);
         ok &= WriteIniInt(path, "Camera", "OrbitDeadzone", static_cast<int>(std::lround(cam.deadzone * 100.0f)));
         ok &= WriteIniInt(path, "Camera", "OrbitSnapTime", static_cast<int>(std::lround(cam.smoothTimeSec * 1000.0f)));
         ok &= WriteIniInt(path, "Camera", "OrbitBackTime", static_cast<int>(std::lround(cam.returnTimeSec * 1000.0f)));
@@ -2038,6 +2136,7 @@ namespace Overlay
                 if (!cam.enabled) ImGui::BeginDisabled();
                 changed |= ImGui::Checkbox("Block automatic gear shifts while orbiting", &cam.blockShift);
                 changed |= ImGui::Checkbox("Invert left / right orbit direction", &cam.invertX);
+                changed |= ImGui::Checkbox("Invert front / back orbit direction (Y)", &cam.invertY);
                 ImGui::Dummy(ImVec2(0.0f, 4.0f * s));
 
                 int dzPct = static_cast<int>(std::lround(cam.deadzone * 100.0f));
@@ -2193,6 +2292,7 @@ namespace Overlay
         std::string trackName, mode, lobbyRoom, lobbyAtmosphere;
         int lobbyEvent = 0, lobbyEvents = 0;
         std::vector<Board> boards;
+        std::vector<FinishedPace> paceHistory;
         std::vector<Notice> notices;
         std::vector<ChatToast> chats;
         std::vector<LobbyPlayer> lobbyPlayers;
@@ -2215,6 +2315,7 @@ namespace Overlay
             trackName = g_trackName.empty() ? g_trackKey : g_trackName;
             mode = g_raceMode;
             boards = g_boards;
+            if (showStanding && paceBarShown && g_paceHistoryKey == PaceHistoryKey()) paceHistory = g_paceHistory;
             for (std::deque<Notice>::iterator it = g_noticeQueue.begin(); it != g_noticeQueue.end(); )
             {
                 if (it->shownAt >= 0.0 && now - it->shownAt > it->duration) it = g_noticeQueue.erase(it);
@@ -2293,7 +2394,7 @@ namespace Overlay
         ImGui_ImplDX9_NewFrame();
         ImGui::NewFrame();
         const RaceResults::LivePace pace = (showStanding && paceBarShown) ? RaceResults::GetLivePace() : RaceResults::LivePace();
-        if (showStanding) DrawStanding(trackName, mode, boards, paceBarShown, pace, pingMs, s);
+        if (showStanding) DrawStanding(trackName, mode, boards, paceBarShown, pace, paceHistory, pingMs, s);
         if (showLobby) DrawLobby(lobbyRoom, lobbyAtmosphere, lobbyEvent, lobbyEvents, lobbyPlayers, lobbyTimer, vote, pingMs, s);
         float topCenterY = 24.0f * s;
         if (!notices.empty()) topCenterY = DrawNotices(notices, now, s);
@@ -2473,6 +2574,12 @@ namespace Overlay
         {
             Guard guard;
             g_racing = racing && !rawTrack.empty() && !raceMode.empty();
+            if (g_racing && (rawTrack != g_paceTrack || raceMode != g_paceMode))
+            {
+                ClearPaceHistory();
+                g_paceTrack = rawTrack;
+                g_paceMode = raceMode;
+            }
             g_trackKey = rawTrack;
             g_trackName = trackName;
             g_raceMode = raceMode;
@@ -2496,6 +2603,7 @@ namespace Overlay
                        const std::vector<LobbyPlayer>& players)
     {
         Guard guard;
+        if (room != g_lobbyRoom || eventIndex != g_lobbyEventIndex) ClearPaceHistory();
         g_lobbyRoom = room;
         g_lobbyAtmosphere = atmosphere;
         g_lobbyEventIndex = eventIndex;
@@ -2536,6 +2644,7 @@ namespace Overlay
     void ResetRoomState()
     {
         Guard guard;
+        ClearPaceHistory();
         g_lobbyRoom.clear();
         g_lobbyAtmosphere.clear();
         g_lobbyEventIndex = 0;
@@ -2554,11 +2663,36 @@ namespace Overlay
         g_boards = boards;
     }
 
+    // Call with g_lock held, before the heat's result updates g_boards, so the delta is against the
+    // PB/target the heat was actually chasing.
+    static void RecordFinishedPace(const std::string& raceMode, float raceTime, float bestLap, float score, float topSpeedKmh)
+    {
+        const std::string key = PaceHistoryKey();
+        if (key != g_paceHistoryKey)
+        {
+            g_paceHistory.clear();
+            g_paceHistoryKey = key;
+        }
+        bool oneLapRace = false;
+        FinishedPace h;
+        ResolvePaceTarget(raceMode, g_boards, 0.0f, &h.metric, &h.target, &h.targetLabel, &oneLapRace);
+        if (h.metric == "score") h.value = score;
+        else if (h.metric == "top_speed") h.value = topSpeedKmh;
+        else if (h.metric == "wheelie") { h.metric = "race_time"; h.value = raceTime; h.target = 0.0; h.targetLabel.clear(); }
+        else if (h.metric == "race_time" || oneLapRace) h.value = raceTime;
+        else h.value = bestLap;
+        if (!(h.value > 0.0) || !std::isfinite(h.value)) return;
+        h.number = static_cast<int>(g_paceHistory.size()) + 1;
+        g_paceHistory.push_back(h);
+        if (g_paceHistory.size() > 8) g_paceHistory.erase(g_paceHistory.begin()); // keep the panel short
+    }
+
     void ApplyLocalResult(const std::string& trackKey, const std::string& raceMode, float raceTime, float bestLap,
                           int laps, float score, float topSpeedKmh)
     {
         Guard guard;
         if (trackKey.empty() || trackKey != g_standingTrack || raceMode != g_standingMode) return;
+        RecordFinishedPace(raceMode, raceTime, bestLap, score, topSpeedKmh);
         for (Board& b : g_boards)
         {
             double value = 0.0;
